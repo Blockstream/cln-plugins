@@ -2,5 +2,6 @@
 resolver = "3"
 members = [
 	"event-plugin",
-	"metrics-plugin"
+	"metrics-plugin",
+	"vchannel-plugin"
 ]
