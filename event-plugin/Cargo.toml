@@ -3,6 +3,7 @@ name = "event-plugin"
 version = "0.1.0"
 edition = "2024"
 description = "CLN plugin for collecting events"
+license.workspace = true
 
 [dependencies]
 cln-plugin         = { version = "0.7" }

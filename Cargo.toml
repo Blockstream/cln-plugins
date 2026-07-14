@@ -5,3 +5,6 @@ members = [
 	"metrics-plugin",
 	"vchannel-plugin"
 ]
+
+[workspace.package]
+license = "MIT"
