@@ -1,45 +1,144 @@
-# C-Lightning plugin which allows transfers between nodes via virtual channels
+# Virtual Channel Plugin
 
-Imagine we have the following network topology: A-B1--B2-C. The node C wants to receive a payment from A, and B1,B2 are
-our nodes where we initialized a virtual channel. Then, the entire flow can be briefly described as follows:
+**Route Core Lightning payments across a trusted, unfunded link between two nodes.**
 
-1. We pay the C's invoice using `sendpay` by A. This invoice routes the payment to B1.
-2. On B1 node we catch the `htcl_accepted` hook;
-3. In the hook we check if the next channel is our virtual channel;
-4. If yes, we submit a request using custom message to the next B2 node, which contains a payment onion for this node;
-5. Upon receiving this message on B2 node, it executes the `injectpaymentonion` RPC request;
-6. The B1 node in turn holds the hook, until it reaches CLTV or receives a response from B2;
-7. If the onion injection was successful, the B2 node receives a preimage and sends it to B1 using custom message;
-8. Upon receiving the preimage, the B1 node resolves the HTLC.
+----
 
-This plugin leverages the following assumptions:
+An experimental [Core Lightning](https://github.com/ElementsProject/lightning) plugin that forwards payment onions
+between cooperating peers using custom messages.
 
-- The payment for the unique payment hash can be processed only once;
-- If any critical error happens, the plugin deactivates;
-- If the plugin is deactivated, it will not accept any payments or HTLCs, but the node will finish processing existing
-  payments.
+## Overview
 
-## RPC
+The plugin lets two cooperating CLN nodes act as adjacent hops in a payment route without a funded channel between them.
+Both nodes store the same deterministic virtual short-channel ID, exchange the forwarded onion over a CLN custom
+message, and coordinate the resulting preimage or failure.
 
-### `vch-open` - open a new virtual channel with peer. If the channel already exists, changes its status to `Opened`
+Consider this route:
 
-Request example:
+```text
+             funded             virtual             funded
+    A ───────────────── B1 ═════════════════ B2 ───────────────── C
+                              trusted link
+```
+
+- `A` pays an invoice created by `C`.
+- `B1` and `B2` run this plugin and have a virtual channel open with each other.
+- `B1` and `B2` must be connected as Lightning peers so they can exchange custom messages.
+- The sender supplies a route whose middle hop uses the virtual channel ID.
+
+The plugin bridges HTLC processing, but it does not move funds or enforce a balance between `B1` and `B2`. The operators
+are responsible for the trust relationship, accounting, liquidity, and any external settlement between those nodes.
+
+## How it works
+
+1. `A` sends a payment along a route containing the virtual channel between `B1` and `B2`.
+2. `B1` intercepts the HTLC through the `htlc_accepted` hook and recognizes the outgoing virtual channel ID.
+3. `B1` holds the HTLC and sends `B2` the next onion, payment hash, amount, and CLTV using a custom message.
+4. `B2` calls CLN's `injectpaymentonion` RPC to continue the payment toward `C`.
+5. `B2` returns either the payment preimage or a failure notification to `B1`.
+6. `B1` resolves or fails the held HTLC. It also stops waiting when the outgoing CLTV height is reached.
+
+Virtual channels and payment state are persisted in CLN's datastore under the `vchannel` namespace.
+
+## Requirements
+
+- Core Lightning node (developed under v25)
+- The plugin installed and running on both virtual-channel peers
+- A direct peer connection between those nodes
+- Explicit trust and an external accounting or settlement arrangement between their operators
+
+## Quick start
+
+### 1. Build
+
+From the repository root:
+
+```bash
+cargo build --release --package vchannel-plugin
+```
+
+The executable is created at:
+
+```text
+target/release/vchannel-plugin
+```
+
+### 2. Configure both CLN nodes
+
+Add the plugin to the CLN configuration on both virtual-channel peers:
+
+```ini
+plugin=/absolute/path/to/cln-plugins/target/release/vchannel-plugin
+vchannel-check-payment-sec=5
+```
+
+| Option                       | Required | Default | Description                                                                      |
+|------------------------------|----------|---------|----------------------------------------------------------------------------------|
+| `vchannel-check-payment-sec` | No       | `5`     | How often, in seconds, the held `htlc_accepted` hook checks for a payment result |
+
+Restart both CLN nodes after changing their configuration.
+
+### 3. Connect the peers
+
+The nodes need a peer connection for custom-message delivery; a funded channel is not required:
+
+```bash
+lightning-cli connect <peer-node-id>@<host>:<port>
+```
+
+### 4. Open the virtual channel on both sides
+
+On `B1`:
+
+```bash
+lightning-cli vch-open <B2-node-id>
+```
+
+On `B2`:
+
+```bash
+lightning-cli vch-open <B1-node-id>
+```
+
+Confirm that both nodes derived the same `virtual_channel_id`:
+
+```bash
+lightning-cli vch-list
+```
+
+The returned ID can then be used as the channel for the `B1 → B2` hop in an explicitly constructed route. The
+plugin does not announce virtual channels to the network or add them to CLN's automatic route discovery.
+
+## RPC reference
+
+### `vch-open`
+
+Creates a virtual channel for a peer, or reopens an existing one. The ID is deterministically derived from the two node
+IDs, so both peers derive the same value.
+
+```bash
+lightning-cli vch-open <peer-node-id>
+```
+
+Named-parameter request:
 
 ```json
 {
-  "peer_id": "nodeid020202020202020202020202020202020202020202020202020202020202"
+  "peer_id": "02..."
 }
 ```
 
-Response example:
+Returns an empty JSON value on success.
 
-```json
-{}
+### `vch-close`
+
+Marks a virtual channel as `Closed`. It does not delete its datastore entry.
+
+```bash
+lightning-cli vch-close <virtual-channel-id>
 ```
 
-### `vch-close` - close a virtual channel, meaning changing its status to `Closed`
-
-Request example:
+Named-parameter request:
 
 ```json
 {
@@ -47,46 +146,37 @@ Request example:
 }
 ```
 
-Response example:
+Returns an empty JSON value on success.
 
-```json
-{}
+### `vch-list`
+
+Lists persisted virtual channels:
+
+```bash
+lightning-cli vch-list
 ```
 
-### `vch-list` - list virtual channels
-
-Request example:
-
-```json
-{}
-```
-
-Response example:
+Example response:
 
 ```json
 [
   {
     "virtual_channel_id": "123x456x789",
-    "peer_id": "nodeid020202020202020202020202020202020202020202020202020202020202",
+    "peer_id": "02...",
     "status": "Opened"
-  },
-  {
-    "virtual_channel_id": "123x456x780",
-    "peer_id": "nodeid020202020202020202020202020202020202020202020202020202020203",
-    "status": "Closed"
   }
 ]
 ```
 
-### `vch-status` - get current plugin status
+Possible channel states are `Opened` and `Closed`.
 
-Request example:
+### `vch-status`
 
-```json
-{}
+Reports whether the plugin is accepting new virtual-channel work:
+
+```bash
+lightning-cli vch-status
 ```
-
-Response example:
 
 ```json
 {
@@ -94,128 +184,114 @@ Response example:
 }
 ```
 
-### `vch-activate` - activate plugin
+> [!NOTE]
+> `status` is currently returned as the string `"true"` or `"false"`, not as a JSON boolean.
 
-Request and response are empty.
+### `vch-activate`
 
-### `vch-deactivate` - deactivate plugin
+Activates virtual-channel processing:
 
-Request and response are empty.
+```bash
+lightning-cli vch-activate
+```
 
-## Custom Messages
+The plugin starts active whenever it starts.
 
-### Method: `vchannel_pay`. Request a payment via virtual channel.
+### `vch-deactivate`
 
-Request example:
+Stops accepting new virtual-channel payments while allowing already-started work to finish:
+
+```bash
+lightning-cli vch-deactivate
+```
+
+Critical internal errors also deactivate the plugin as a safety measure. Inspect the CLN log before activating it again.
+
+## Protocol
+
+The plugin registers custom-message type `37914`. Its payload is a JSON-RPC request using one of three internal methods:
+
+| Method            | Direction | Purpose                                |
+|-------------------|-----------|----------------------------------------|
+| `vchannel_pay`    | `B1 → B2` | Requests onion injection for a payment |
+| `vchannel_paid`   | `B2 → B1` | Returns the payment preimage           |
+| `vchannel_unpaid` | `B2 → B1` | Reports that onion injection failed    |
+
+Messages are accepted only when the stored virtual channel belongs to the sending peer. Unknown message types and
+methods are ignored.
+
+### Payment request
 
 ```json
 {
-  "next_onion": "onion303030303030303030303030303...",
-  "payment_hash": "paymenthashinvl0270027002700270027002700270027002700270027002700",
-  "amount_msat": 1111,
-  "cltv": 10,
-  "virtual_channel_id": "123x456x789"
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "vchannel_pay",
+  "params": {
+    "next_onion": "...",
+    "payment_hash": "...",
+    "amount_msat": 100000,
+    "cltv": 800000,
+    "virtual_channel_id": "123x456x789"
+  }
 }
 ```
 
-### Method: `vchannel_paid`. Notifies about successful payment, contains preimage.
-
-Request example:
+### Success notification
 
 ```json
 {
-  "payment_hash": "paymenthashinvl0270027002700270027002700270027002700270027002700",
-  "payment_preimage": "paymentsecretinvl00310003100031000310003100031000310003100031000"
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "vchannel_paid",
+  "params": {
+    "payment_hash": "...",
+    "payment_preimage": "..."
+  }
 }
 ```
 
-### Method: `vchannel_unpaid`. Notifies about unsuccessful payment.
-
-Request example:
+### Failure notification
 
 ```json
 {
-  "payment_hash": "paymenthashinvl0270027002700270027002700270027002700270027002700"
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "vchannel_unpaid",
+  "params": {
+    "payment_hash": "..."
+  }
 }
 ```
 
-## `custommsg` hook handler
+These messages are an internal protocol and may change while the plugin is experimental.
 
-```mermaid
-stateDiagram-v2
-    Successful: Continue
-    Failed: Continue and Deactivate
-    CustomMessage --> Deserialize
-    Deserialize --> Successful: Failed
-    Deserialize --> VerifyMsgType
-    VerifyMsgType --> Successful: Not our message
-    VerifyMsgType --> MapToHandler: Our message
-    MapToHandler --> HandlePayRequest
-    MapToHandler --> HandlePaidRequest
-    MapToHandler --> HandleUnpaidRequest
-    HandlePayRequest --> Successful: Successful
-    HandlePaidRequest --> Successful: Successful
-    HandleUnpaidRequest --> Successful: Successful
-    HandlePayRequest --> Failed: Critical error happened
-    HandlePaidRequest --> Failed: Critical error happened
-    HandleUnpaidRequest --> Failed: Critical error happened
+## Operational behavior and limitations
+
+- A payment hash is processed only once. Payment records persist in CLN's datastore, including across plugin restarts.
+- Opening or closing a virtual channel changes local state only; run the corresponding command on both peers.
+- Virtual channels are not gossiped and are unavailable to automatic route finding. Callers must construct a route
+  explicitly, or it should be included into the invoice as route hint.
+- A peer disconnect, custom-message failure, datastore failure, or CLN RPC failure can interrupt payment processing.
+- The virtual-channel ID is a compact value derived from both public keys; it is an identifier, not a funding reference
+  or cryptographic commitment.
+
+## Testing
+
+Build the release binary before running the integration suite:
+
+```bash
+cargo build --release --package vchannel-plugin
+pytest vchannel-plugin/tests/test_plugin.py
 ```
 
-## `vchannel_pay` JSON-RPC handler
+The tests use the Core Lightning Python testing fixtures and create regtest nodes. Ensure the CLN test dependencies are
+installed in your Python environment.
 
-```mermaid
-stateDiagram-v2
-    Successful: Continue
-    Failed: Continue and Deactivate
-    HandlePayRequest --> IsActive
-    IsActive --> Successful: Plugin is inactive
-    IsActive --> Authorize
-    Authorize --> Successful: Unauthorized
-    Authorize --> Failed: CLN RPC error
-    Authorize --> CheckPaymentExist
-    CheckPaymentExist --> Failed: CLN RPC error
-    CheckPaymentExist --> Successful: Payment exist
-    CheckPaymentExist --> StorePayment: Payment does not exist
-    StorePayment --> Failed: CLN RPC error
-    StorePayment --> Call_InjectPaymentOnion: Payment created
-    Call_InjectPaymentOnion --> UpdatePaymentResolved: Received preimage
-    Call_InjectPaymentOnion --> UpdatePaymentRejected: Injection failed
-    UpdatePaymentResolved --> Failed: CLN RPC error
-    UpdatePaymentResolved --> Call_Paid: Payment updated
-    UpdatePaymentRejected --> Failed: CLN RPC error
-    UpdatePaymentRejected --> Call_Unpaid: Payment updated
-    Call_Unpaid --> Failed: CLN RPC error
-    Call_Unpaid --> Successful
-    Call_Paid --> Failed: CLN RPC error
-    Call_Paid --> Successful
+## Security model
 
+This protocol trusts the remote virtual-channel peer to handle payment requests and report results correctly. It has no
+on-chain funding transaction, commitment transaction, channel reserve, gossip announcement, or built-in mechanism for
+reconciling value transferred between the two sides.
 
-```
-
-## `htlc_accepted` hook handler
-
-```mermaid
-stateDiagram-v2
-    Successful: Continue
-    Failed: Continue and Deactivate
-    Rejected: Reject and Deactivate
-    HTLCAccepted --> Deserialize
-    Deserialize --> Successful: Failed
-    Deserialize --> IsActive
-    IsActive --> Successful: Plugin is inactive
-    IsActive --> GetVChannel
-    GetVChannel --> Successful: Virtual channel does not exist
-    GetVChannel --> Failed: CLN RPC error
-    GetVChannel --> CheckPaymentExist
-    CheckPaymentExist --> Reject: Payment exist
-    CheckPaymentExist --> Rejected: CLN RPC error
-    CheckPaymentExist --> StorePayment
-    StorePayment --> Rejected: CLN RPC error
-    StorePayment --> Call_Pay
-    Call_Pay --> Rejected: CLN RPC error
-    Call_Pay --> CheckPaymentStatus
-    CheckPaymentStatus --> CheckPaymentStatus: Wait 5 sec
-    CheckPaymentStatus --> Reject: Payment rejected
-    CheckPaymentStatus --> Reject: Time limit exceeded (CLTV)
-    CheckPaymentStatus --> Resolve: Payment resolved
-```
+Deploy it only when that trust model is intentional and supported by operational controls outside this plugin.
