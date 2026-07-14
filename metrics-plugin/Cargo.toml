@@ -3,6 +3,7 @@ name = "metrics-plugin"
 version = "0.1.0"
 edition = "2024"
 description = "CLN plugin for exposing Prometheus liquidity metrics"
+license.workspace = true
 
 [[bin]]
 name = "metrics-plugin"

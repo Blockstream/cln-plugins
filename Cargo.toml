@@ -4,3 +4,6 @@ members = [
 	"event-plugin",
 	"metrics-plugin"
 ]
+
+[workspace.package]
+license = "MIT"
