@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package events.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message EventEnvelope {
+  uint32 envelope_version = 1;
+  // Snowflake ID
+  fixed64 event_id = 2;
+  // open-ended event type, e.g. "coin_movement". Allows us to easily extend
+  // towards more specific events later, e.g "coin_movement.chain_mvt" or
+  // "coin_movement.channel_mvt"
+  string event_type = 3;
+  google.protobuf.Timestamp emitted_at = 4;
+  SourceKind source_kind = 5;
+  // raw node ID bytes
+  bytes source_node_id = 6;
+  // CLN release, e.g. "v25.12"
+  string producer_version = 7;
+  // UTF-8 JSON bytes from the actuall CLN notification/hook
+  bytes payload_json = 8;
+}
+
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_GATEWAY = 1;
+  SOURCE_KIND_LSP = 2;
+}

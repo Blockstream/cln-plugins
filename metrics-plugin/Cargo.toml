@@ -1,0 +1,20 @@
+[package]
+name = "metrics-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "CLN plugin for exposing Prometheus liquidity metrics"
+
+[[bin]]
+name = "metrics-plugin"
+path = "src/main.rs"
+
+[dependencies]
+cln-plugin         = { version = "0.7" }
+cln-rpc            = { version = "0.6" }
+prometheus         = { version = "0.14" }
+axum               = { version = "0.8" }
+tokio              = { version = "1", features = ["full"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = { version = "1" }
+anyhow             = { version = "1" }
+tracing            = { version = "0.1" }

@@ -1,0 +1,23 @@
+[package]
+name = "event-plugin"
+version = "0.1.0"
+edition = "2024"
+description = "CLN plugin for collecting events"
+
+[dependencies]
+cln-plugin         = { version = "0.7" }
+tokio              = { version = "1", features = ["full"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = { version = "1" }
+anyhow             = { version = "1" }
+tracing            = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+lapin              = { version = "4" }
+tonic              = { version = "0.14" }
+prost              = { version = "0.14" }
+prost-types        = { version = "0.14" }
+ferroid            = { version = "2", features = ["snowflake", "atomic", "async-tokio"]}
+hex                = { version = "0.4" }
+
+[build-dependencies]
+tonic-prost-build = { version = "0.14" }
