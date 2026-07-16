@@ -6,7 +6,7 @@ Core Lightning plugin that collects events and sends them to RabbitMQ
 
 ## Events handled
 
-There are 8 events (subscriptions):
+The plugin subscribes to the CLN notifications listed in `EVENT_PLUGIN_EVENTS`. Common event types are:
 
 - `connect` - A peer connected to the node
 - `disconnect` - A peer disconnected from the node
@@ -32,10 +32,14 @@ RabbitMQ, and then return "continue" so that CLN can continue the operation
 Set RabbitMQ URL with the plugin option:
 
 ```
+EVENT_PLUGIN_EVENTS=connect,disconnect,invoice_creation,invoice_payment,channel_opened,channel_state_changed,forward_event,block_added
 --rabbitmq-url=amqp://guest:guest@localhost:5672/%2f
 --rabbitmq-exchange=some_exchange
 --rabbitmq-queue=some_queue
 ```
+
+`EVENT_PLUGIN_EVENTS` is required and must be set in the environment before CLN starts the plugin. Its comma-separated
+value defines the notifications advertised to CLN during the plugin handshake.
 
 If RabbitMQ is not available at **startup**, the plugin exits with an error and CLN will not load it.
 
