@@ -70,6 +70,12 @@ async fn main() -> Result<()> {
         bail!(msg);
     }
 
+    if event_types.iter().any(|event_type| event_type == "*") {
+        let msg = format!("'{EVENT_TYPES_ENV}' does not support wildcard subscriptions");
+        _ = configured.disable(&msg).await;
+        bail!(msg);
+    }
+
     // Fail if RabbitMQ is not configured, we can not operate without.
     let Some(url) = get_configured_string_option(&configured, "rabbitmq-url") else {
         let msg = "'rabbitmq-url' option is required but not set";
