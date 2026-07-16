@@ -11,6 +11,7 @@ use lapin::options::{ExchangeDeclareOptions, QueueDeclareOptions};
 use lapin::types::FieldTable;
 use lapin::{Connection, ConnectionProperties, ExchangeKind};
 use serde::Deserialize;
+use std::env;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
@@ -22,12 +23,14 @@ use tracing::info;
 
 const DEFAULT_EXCHANGE_NAME: &str = "cln.events";
 const DEFAULT_QUEUE_NAME: &str = "events";
+const EVENT_TYPES_ENV: &str = "EVENT_PLUGIN_EVENTS";
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let amqp_channel: Arc<RwLock<Option<lapin::Channel>>> = Arc::new(RwLock::new(None));
+    let event_types = event_types_from_env();
 
-    let configured = Builder::new(tokio::io::stdin(), tokio::io::stdout())
+    let mut builder = Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .option(ConfigOption::new_str_no_default(
             "rabbitmq-url",
             "AMQP URL: user:pass@host:port/vhost",
@@ -45,30 +48,27 @@ async fn main() -> Result<()> {
         .option(ConfigOption::new_str_no_default(
             "source-kind",
             "Event source kind: 'gateway' or 'lsp'",
-        ))
-        .subscribe("connect", on_connect)
-        .subscribe("disconnect", on_disconnect)
-        .subscribe("invoice_creation", on_invoice_creation)
-        .subscribe("invoice_payment", on_invoice_payment)
-        .subscribe("channel_opened", on_channel_opened)
-        .subscribe("channel_open_failed", on_channel_open_failed)
-        .subscribe("channel_state_changed", on_channel_state_changed)
-        .subscribe("forward_event", on_forward_event)
-        .subscribe("block_added", on_block_added)
-        .subscribe("custommsg", on_custommsg)
-        .subscribe("warning", on_warning)
-        .subscribe("sendpay_success", on_sendpay_success)
-        .subscribe("sendpay_failure", on_sendpay_failure)
-        .subscribe("coin_movement", on_coin_movement)
-        .subscribe("openchannel_peer_sigs", on_openchannel_peer_sigs)
-        .subscribe("onionmessage_forward_fail", on_onionmessage_forward_fail)
-        .subscribe("pay_part_start", on_pay_part_start)
-        .subscribe("pay_part_end", on_pay_part_end)
+        ));
+
+    for event_type in &event_types {
+        let handler_event_type = event_type.clone();
+        builder = builder.subscribe(event_type, move |p, v| {
+            on_event(p, handler_event_type.clone(), v)
+        });
+    }
+
+    let configured = builder
         .dynamic()
         .configure()
         .await?
         // Fail early and loud, we don't want to run the node without this plugin.
         .context("failed to configure event-plugin")?;
+
+    if event_types.is_empty() {
+        let msg = format!("'{EVENT_TYPES_ENV}' must contain at least one event type");
+        _ = configured.disable(&msg).await;
+        bail!(msg);
+    }
 
     // Fail if RabbitMQ is not configured, we can not operate without.
     let Some(url) = get_configured_string_option(&configured, "rabbitmq-url") else {
@@ -144,6 +144,16 @@ async fn main() -> Result<()> {
     let _ = conn.close(0, "".into()).await;
 
     Ok(())
+}
+
+fn event_types_from_env() -> Vec<String> {
+    env::var(EVENT_TYPES_ENV)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|event_type| !event_type.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 struct NodeInfo {
