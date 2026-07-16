@@ -39,7 +39,8 @@ EVENT_PLUGIN_EVENTS=connect,disconnect,invoice_creation,invoice_payment,channel_
 ```
 
 `EVENT_PLUGIN_EVENTS` is required and must be set in the environment before CLN starts the plugin. Its comma-separated
-value defines the notifications advertised to CLN during the plugin handshake.
+value defines the notifications advertised to CLN during the plugin handshake. Wildcard subscriptions are not
+supported.
 
 If RabbitMQ is not available at **startup**, the plugin exits with an error and CLN will not load it.
 
