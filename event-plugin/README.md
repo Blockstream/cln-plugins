@@ -6,7 +6,7 @@ Core Lightning plugin that collects events and sends them to RabbitMQ
 
 ## Events handled
 
-The plugin subscribes to the CLN notifications listed in `EVENT_PLUGIN_EVENTS`. Common event types are:
+The plugin subscribes to a configurable list of CLN notifications. Common event types are:
 
 - `connect` - A peer connected to the node
 - `disconnect` - A peer disconnected from the node
@@ -38,9 +38,21 @@ EVENT_PLUGIN_EVENTS=connect,disconnect,invoice_creation,invoice_payment,channel_
 --rabbitmq-queue=some_queue
 ```
 
-`EVENT_PLUGIN_EVENTS` is required and must be set in the environment before CLN starts the plugin. Its comma-separated
-value defines the notifications advertised to CLN during the plugin handshake. Wildcard subscriptions are not
-supported.
+The list of notifications advertised to CLN during the plugin handshake is resolved from, in priority order:
+
+1. `EVENT_PLUGIN_EVENTS` environment variable — a comma-separated list of event types.
+2. The TOML config file pointed to by the `EVENT_PLUGIN_CONFIG` environment variable:
+
+   ```toml
+   [event-plugin]
+   events_list = ["connect", "disconnect", "invoice_payment"]
+   ```
+
+3. A built-in default list covering the common notifications (connect/disconnect, invoices, channels, forwards,
+   payments, coin movements, and more).
+
+Because subscriptions are declared before CLN passes plugin options, both variables must be set in the environment
+before CLN starts the plugin. Wildcard subscriptions are not supported.
 
 If RabbitMQ is not available at **startup**, the plugin exits with an error and CLN will not load it.
 

@@ -1,4 +1,5 @@
 mod broker;
+mod config;
 mod events;
 mod proto;
 
@@ -6,12 +7,12 @@ use anyhow::{Context, Result, bail};
 use broker::MessageBroker;
 use cln_plugin::Builder;
 use cln_plugin::options::ConfigOption;
+use config::resolve_event_types;
 use events::*;
 use lapin::options::{ExchangeDeclareOptions, QueueDeclareOptions};
 use lapin::types::FieldTable;
 use lapin::{Connection, ConnectionProperties, ExchangeKind};
 use serde::Deserialize;
-use std::env;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::path::PathBuf;
@@ -23,12 +24,11 @@ use tracing::info;
 
 const DEFAULT_EXCHANGE_NAME: &str = "cln.events";
 const DEFAULT_QUEUE_NAME: &str = "events";
-const EVENT_TYPES_ENV: &str = "EVENT_PLUGIN_EVENTS";
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let amqp_channel: Arc<RwLock<Option<lapin::Channel>>> = Arc::new(RwLock::new(None));
-    let event_types = event_types_from_env();
+    let event_types = resolve_event_types();
 
     let mut builder = Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .option(ConfigOption::new_str_no_default(
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
             "Event source kind: 'gateway' or 'lsp'",
         ));
 
-    for event_type in &event_types {
+    for event_type in event_types.iter().flatten() {
         let handler_event_type = event_type.clone();
         builder = builder.subscribe(event_type, move |p, v| {
             on_event(p, handler_event_type.clone(), v)
@@ -64,14 +64,8 @@ async fn main() -> Result<()> {
         // Fail early and loud, we don't want to run the node without this plugin.
         .context("failed to configure event-plugin")?;
 
-    if event_types.is_empty() {
-        let msg = format!("'{EVENT_TYPES_ENV}' must contain at least one event type");
-        _ = configured.disable(&msg).await;
-        bail!(msg);
-    }
-
-    if event_types.iter().any(|event_type| event_type == "*") {
-        let msg = format!("'{EVENT_TYPES_ENV}' does not support wildcard subscriptions");
+    if let Err(e) = &event_types {
+        let msg = format!("{e:#}");
         _ = configured.disable(&msg).await;
         bail!(msg);
     }
@@ -150,16 +144,6 @@ async fn main() -> Result<()> {
     let _ = conn.close(0, "".into()).await;
 
     Ok(())
-}
-
-fn event_types_from_env() -> Vec<String> {
-    env::var(EVENT_TYPES_ENV)
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|event_type| !event_type.is_empty())
-        .map(str::to_string)
-        .collect()
 }
 
 struct NodeInfo {
