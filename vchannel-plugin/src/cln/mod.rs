@@ -13,7 +13,7 @@ pub const PLUGIN_MESSAGE_TYPE: u16 = 37914;
 #[allow(unused)]
 pub const WIRE_TEMPORARY_NODE_FAILURE: &str = "2002";
 #[allow(unused)]
-pub const WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS: &str = "4015";
+pub const WIRE_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS: &str = "400f";
 
 #[derive(Debug, Deserialize)]
 #[allow(unused)]
