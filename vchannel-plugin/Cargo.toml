@@ -1,0 +1,20 @@
+[package]
+name = "vchannel-plugin"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "vchannel-plugin"
+path = "src/main.rs"
+
+[dependencies]
+cln-plugin = { version = "0.5" }
+tokio = { version = "1", features = ["full"] }
+anyhow = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+hex = "0.4"
+cln-rpc = { version = "0.5" }
+thiserror = "2"
+bitcoin = { version = "0.31", features = ["serde"] }
+log = "0.4"

@@ -6,7 +6,7 @@
 
 A growing collection of plugins for [Core Lightning](https://github.com/ElementsProject/lightning).
 
-[Plugins](#plugins) · [Quick start](#quick-start) · [Contributing](#contributing)
+[Plugins](#plugins) · [Contributing](#contributing) · [Security](#security)
 
 </div>
 
@@ -17,15 +17,16 @@ A growing collection of plugins for [Core Lightning](https://github.com/Elements
 Running a Core Lightning node often means connecting it to the rest of your infrastructure: monitoring, event pipelines,
 dashboards, alerts, and more. This repository keeps those integrations small, composable, and open source.
 
-Each plugin lives in its own workspace crate and can be built, configured, and run independently. There are two plugins
-today—and the collection is designed to grow.
+Each plugin lives in its own workspace crate and can be built, configured, and run independently. There are three
+plugins today—and the collection is designed to grow.
 
 ## Plugins
 
-| Plugin                               | What it does                                                     | Integrates with |
-|--------------------------------------|------------------------------------------------------------------|-----------------|
-| [`event-plugin`](./event-plugin)     | Publishes CLN events and hook data to a message broker           | RabbitMQ        |
-| [`metrics-plugin`](./metrics-plugin) | Exposes node, funds, liquidity, channel, peer, and event metrics | Prometheus      |
+| Plugin                                 | What it does                                                      | 
+|----------------------------------------|-------------------------------------------------------------------|
+| [`event-plugin`](./event-plugin)       | Publishes CLN events and hook data to a message broker (RabbitMQ) |
+| [`metrics-plugin`](./metrics-plugin)   | Exposes CLN node metrics to Prometheus                            |
+| [`vchannel-plugin`](./vchannel-plugin) | Routes payments across a trusted, unfunded link between CLN nodes |
 
 ### Event plugin
 
@@ -45,48 +46,15 @@ Use it as the foundation for dashboards, alerts, and day-to-day node monitoring.
 
 [Configuration and metric reference →](./metrics-plugin/README.md)
 
-## Quick start
+### Virtual channel plugin
 
-### Prerequisites
+Route a payment across two cooperating CLN nodes without a funded channel between them. The plugin relays the forwarded
+onion over CLN custom messages and coordinates the resulting preimage or failure while the incoming HTLC is held.
 
-- A working Core Lightning node
-- A recent stable Rust toolchain
-- Protocol Buffers compiler (`protoc`) to build `event-plugin`
-- RabbitMQ for `event-plugin`, or Prometheus for `metrics-plugin`
+Virtual channels are intended for explicitly trusted peers and external settlement arrangements. They are not announced
+to the Lightning Network and must be included in a manually constructed route.
 
-### Build
-
-Clone the repository and build every plugin in release mode:
-
-```bash
-git clone https://github.com/Blockstream/cln-plugins.git
-cd cln-plugins
-cargo build --release --workspace
-```
-
-The executables are created in `target/release/`:
-
-```text
-target/release/event-plugin
-target/release/metrics-plugin
-```
-
-You can also build only the plugin you need:
-
-```bash
-cargo build --release --package metrics-plugin
-```
-
-## Development
-
-Run the standard checks from the repository root:
-
-```bash
-cargo fmt --all --check
-cargo check --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-```
+[Setup, RPC, protocol, and reference →](./vchannel-plugin/README.MD)
 
 ## Contributing
 
@@ -102,4 +70,3 @@ discussed early.
 Lightning plugins run alongside your node and may receive sensitive operational data. Review code and configuration
 before deployment, bind network endpoints conservatively, protect broker credentials, and test changes outside
 production first.
-
