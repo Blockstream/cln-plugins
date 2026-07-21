@@ -55,11 +55,7 @@ async fn main() -> Result<()> {
         .subscribe("forward_event", events::on_forward_event)
         .subscribe("channel_state_changed", events::on_channel_state_changed)
         .hook("htlc_accepted", events::hook_htlc_accepted)
-        .rpcmethod(
-            "metrics-status",
-            "Get metrics plugin status",
-            rpc_status,
-        )
+        .rpcmethod("metrics-status", "Get metrics plugin status", rpc_status)
         .dynamic()
         .configure()
         .await?;
