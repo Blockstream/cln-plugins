@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 cln-plugin         = { version = "0.7" }
-cln-rpc            = { version = "0.6" }
+cln-rpc            = { version = "0.7" }
 prometheus         = { version = "0.14" }
 axum               = { version = "0.8" }
 tokio              = { version = "1", features = ["full"] }

@@ -1,19 +1,14 @@
 use anyhow::Result;
 use cln_plugin::Plugin;
-use cln_rpc::notifications::ChannelStateChangedNotification;
+use cln_rpc::notifications::{ChannelStateChangedNotification, ForwardEventNotification};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::PluginState;
 
 #[derive(Deserialize)]
-struct ForwardEventNotification {
-    forward_event: ForwardEvent,
-}
-
-#[derive(Deserialize)]
-struct ForwardEvent {
-    status: String,
+struct ForwardEventNotificationWrapper {
+    forward_event: ForwardEventNotification,
 }
 
 #[derive(Deserialize)]
@@ -27,12 +22,13 @@ pub async fn on_channel_opened(plugin: Plugin<PluginState>, _v: Value) -> Result
 }
 
 pub async fn on_forward_event(plugin: Plugin<PluginState>, v: Value) -> Result<()> {
-    let n: ForwardEventNotification = serde_json::from_value(v)?;
+    let n: ForwardEventNotificationWrapper = serde_json::from_value(v)?;
+
     plugin
         .state()
         .counters
         .forward_events_total
-        .with_label_values(&[&n.forward_event.status])
+        .with_label_values(&[serde_json::to_string(&n.forward_event.status)?])
         .inc();
     Ok(())
 }
