@@ -27,9 +27,9 @@ pub async fn on_forward_event(plugin: Plugin<PluginState>, v: Value) -> Result<(
     Ok(())
 }
 
-// CLN hook - must return {"result": "continue"} or the HTLC will be rejected by the node
 pub async fn hook_htlc_accepted(plugin: Plugin<PluginState>, _v: Value) -> Result<Value> {
     plugin.state().counters.on_htlc_accepted();
+    // CLN hook - must return {"result": "continue"} or the HTLC will be rejected by the node
     Ok(json!({ "result": "continue" }))
 }
 
