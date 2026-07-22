@@ -48,12 +48,13 @@ lightningd \
 
 The list of notifications advertised to CLN during the plugin handshake is resolved from, in priority order:
 
-1. `EVENT_PLUGIN_EVENTS` environment variable — a comma-separated list of event types.
+1. `EVENT_PLUGIN_EVENTS` environment variable — a comma-separated list of event types. Example:
+    ```
+    EVENT_PLUGIN_EVENTS=connect,disconnect,invoice_creation
+    ```
 2. The TOML config file pointed to by the `EVENT_PLUGIN_CONFIG` environment variable:
-
    ```toml
-   [event-plugin]
-   events_list = ["connect", "disconnect", "invoice_payment"]
+   events = ["connect", "disconnect", "invoice_payment"]
    ```
 
 3. A built-in default list covering the common notifications (connect/disconnect, invoices, channels, forwards,

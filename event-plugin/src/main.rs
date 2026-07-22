@@ -70,6 +70,8 @@ async fn main() -> Result<()> {
         bail!(msg);
     }
 
+    info!("Collecting events={}", event_types?.join(","));
+
     // Fail if RabbitMQ is not configured, we can not operate without.
     let Some(url) = get_configured_string_option(&configured, "rabbitmq-url") else {
         let msg = "'rabbitmq-url' option is required but not set";
