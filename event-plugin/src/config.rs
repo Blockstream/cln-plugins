@@ -3,9 +3,8 @@ use config::{Config, Environment, File};
 use std::path::PathBuf;
 
 const ENV_PREFIX: &str = "EVENT_PLUGIN";
-const ENV_CONFIG_VAR: &str = "EVENT_PLUGIN_CONFIG";
-const ENV_EVENTS_VAR: &str = "EVENT_PLUGIN_EVENTS";
 const CFG_EVENTS_KEY: &str = "events";
+const CFG_CONFIG_KEY: &str = "config";
 
 /// Single source of truth for the events subscribed to when neither
 /// `EVENT_PLUGIN_EVENTS` nor the TOML config file specifies a list.
@@ -50,27 +49,37 @@ const DEFAULT_EVENTS: &[&str] = &[
 ///
 /// 3. [`DEFAULT_EVENTS`].
 pub fn resolve_event_types() -> Result<Vec<String>> {
-    let env = Environment::with_prefix(ENV_PREFIX)
-        .try_parsing(true)
-        .list_separator(",")
-        .with_list_parse_key(CFG_EVENTS_KEY)
-        .ignore_empty(true);
-
+    let env = Environment::with_prefix(ENV_PREFIX).ignore_empty(true);
     let mut builder = Config::builder().set_default(CFG_EVENTS_KEY, DEFAULT_EVENTS.to_vec())?;
 
-    if let Some(path) = std::env::var_os(ENV_CONFIG_VAR) {
+    if let Ok(path) = Config::builder()
+        .add_source(env.clone())
+        .build()?
+        .get_string(CFG_CONFIG_KEY)
+    {
         builder = builder.add_source(File::from(PathBuf::from(path)).required(false));
     }
 
-    let events: Vec<String> = builder.add_source(env).build()?.get(CFG_EVENTS_KEY)?;
+    let events: Vec<String> = builder
+        .add_source(
+            env.try_parsing(true)
+                .list_separator(",")
+                .with_list_parse_key(CFG_EVENTS_KEY),
+        )
+        .build()?
+        .get(CFG_EVENTS_KEY)?;
     Ok(events)
 }
 
 #[cfg(test)]
 mod test {
-    use super::{DEFAULT_EVENTS, ENV_CONFIG_VAR, ENV_EVENTS_VAR, resolve_event_types};
+    use super::{DEFAULT_EVENTS, resolve_event_types};
     use std::fs;
     use std::path::PathBuf;
+
+    const ENV_CONFIG_VAR: &str = "EVENT_PLUGIN_CONFIG";
+    const ENV_EVENTS_VAR: &str = "EVENT_PLUGIN_EVENTS";
+
     fn clear_environment() {
         // SAFETY: these tests are expected to run serially.
         unsafe {
