@@ -6,7 +6,7 @@ Core Lightning plugin that collects events and sends them to RabbitMQ
 
 ## Events handled
 
-There are 8 events (subscriptions):
+The plugin subscribes to a configurable list of CLN notifications. Common event types are:
 
 - `connect` - A peer connected to the node
 - `disconnect` - A peer disconnected from the node
@@ -29,13 +29,40 @@ RabbitMQ, and then return "continue" so that CLN can continue the operation
 
 ## Configuration
 
-Set RabbitMQ URL with the plugin option:
+Set the event subscription source in the environment before starting CLN. For example:
 
+```bash
+export EVENT_PLUGIN_EVENTS="connect,disconnect,invoice_creation,invoice_payment,channel_opened,channel_state_changed,forward_event,block_added"
 ```
---rabbitmq-url=amqp://guest:guest@localhost:5672/%2f
---rabbitmq-exchange=some_exchange
---rabbitmq-queue=some_queue
+
+Configure RabbitMQ and the source kind through CLN plugin options. For example, when starting `lightningd`:
+
+```bash
+lightningd \
+  --plugin=/path/to/event-plugin \
+  --rabbitmq-url=amqp://guest:guest@localhost:5672/%2f \
+  --rabbitmq-exchange=some_exchange \
+  --rabbitmq-queue=some_queue \
+  --source-kind=gateway
 ```
+
+The list of notifications advertised to CLN during the plugin handshake is resolved from, in priority order:
+
+1. `EVENT_PLUGIN_EVENTS` environment variable — a comma-separated list of event types. Example:
+    ```
+    EVENT_PLUGIN_EVENTS=connect,disconnect,invoice_creation
+    ```
+2. The TOML config file pointed to by the `EVENT_PLUGIN_CONFIG` environment variable:
+   ```toml
+   events = ["connect", "disconnect", "invoice_payment"]
+   ```
+
+3. A built-in default list covering the common notifications (connect/disconnect, invoices, channels, forwards,
+   payments, coin movements, and more).
+
+Because subscriptions are declared before CLN passes plugin options, `EVENT_PLUGIN_EVENTS` or `EVENT_PLUGIN_CONFIG`,
+when used, must be present in the plugin process environment before CLN starts it. Wildcard subscriptions are not
+supported.
 
 If RabbitMQ is not available at **startup**, the plugin exits with an error and CLN will not load it.
 
