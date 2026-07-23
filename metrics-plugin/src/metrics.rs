@@ -5,13 +5,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use cln_rpc::notifications::{ChannelStateChangedNotification, ForwardEventNotification};
 use prometheus::{
     Encoder, Gauge, GaugeVec, IntCounter, IntCounterVec, Opts, TextEncoder,
     core::{Collector, Desc},
     proto::MetricFamily,
 };
 use std::sync::{Arc, RwLock};
-use cln_rpc::notifications::{ChannelStateChangedNotification, ForwardEventNotification};
 use tokio::net::TcpListener;
 use tracing::error;
 
