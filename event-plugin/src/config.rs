@@ -71,6 +71,8 @@ pub fn resolve_event_types() -> Result<Vec<String>> {
     Ok(events)
 }
 
+/// Run tests as follows:
+/// cargo test -- --test-threads=1
 #[cfg(test)]
 mod test {
     use super::{DEFAULT_EVENTS, resolve_event_types};
