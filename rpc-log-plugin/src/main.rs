@@ -6,10 +6,8 @@ use cln_rpc::hooks::events::RpcCommandEvent;
 use cln_rpc::model::requests::GetinfoRequest;
 use cln_rpc::primitives::{JsonObjectOrArray, JsonScalar, PublicKey};
 use google_cloud_storage::client::Storage;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
-use std::fmt;
-use std::fmt::{Debug, Display, Formatter};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -46,33 +44,8 @@ const BUCKET_OPTION: StringConfigOption =
 // According to google_cloud_storage::client::Storage::write_object documentation
 const GCS_RESOURCE_NAME_PREFIX: &str = "projects/_/buckets/";
 
-/// A wrapper around a String variable that is intended to hold a password.
-/// It implements [`Display`] which hides the password for being accidentally
-/// printed.
-#[derive(Deserialize, Clone)]
-pub struct Password(String);
-
-impl Password {
-    pub fn inner(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl Debug for Password {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "*****")
-    }
-}
-
-impl Display for Password {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "*****")
-    }
-}
-
 #[derive(Clone)]
-pub struct State {
-    pub cln_rpc_path: PathBuf,
+struct State {
     pub peer_id: PublicKey,
     pub bucket_name: String,
     pub client: Storage,
@@ -94,10 +67,9 @@ async fn main() -> Result<()> {
 
     let cfg = configured.configuration();
     let rpc_path = Path::new(&cfg.lightning_dir).join(&cfg.rpc_file);
-    let peer_id = get_my_peer_id(rpc_path.clone()).await?;
+    let peer_id = get_my_peer_id(rpc_path).await?;
 
     let state = State {
-        cln_rpc_path: rpc_path.clone(),
         bucket_name: format!(
             "{}{}",
             GCS_RESOURCE_NAME_PREFIX,
@@ -117,7 +89,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-pub async fn on_hook_rpc_command(p: Plugin<State>, v: JsonValue) -> Result<JsonValue> {
+async fn on_hook_rpc_command(p: Plugin<State>, v: JsonValue) -> Result<JsonValue> {
     let rpc_command_hook: RpcCommandEvent = serde_json::from_value(v)?;
 
     let body = match rpc_command_hook.rpc_command.params {
