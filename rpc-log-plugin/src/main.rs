@@ -2,7 +2,7 @@ mod rune;
 
 use crate::rune::rune_tag;
 use anyhow::{Context, Result};
-use cln_plugin::options::{ConfigOption, StringConfigOption};
+use cln_plugin::options::{ConfigOption, DefaultStringConfigOption, StringConfigOption};
 use cln_plugin::{Builder, Plugin};
 use cln_rpc::ClnRpc;
 use cln_rpc::hooks::events::RpcCommandEvent;
@@ -11,6 +11,7 @@ use cln_rpc::primitives::{JsonObjectOrArray, JsonScalar, PublicKey};
 use google_cloud_storage::client::Storage;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -42,6 +43,13 @@ const DANGER_FIELDS: [&str; 13] = [
 //     "If specified - plugin will not send logs to the GCS bucket",
 // );
 
+const RPC_LIST_OPTION_NAME: &str = "log-rpc-list";
+const RPC_LIST_OPTION: DefaultStringConfigOption = ConfigOption::new_str_with_default(
+    RPC_LIST_OPTION_NAME,
+    "checkrune",
+    "A list of comma separated rpc commands to log",
+);
+
 const BUCKET_OPTION_NAME: &str = "log-bucket";
 const BUCKET_OPTION: StringConfigOption =
     ConfigOption::new_str_no_default(BUCKET_OPTION_NAME, "A GCS bucket to store logs in");
@@ -54,12 +62,24 @@ struct State {
     pub peer_id: PublicKey,
     pub bucket_name: String,
     pub client: Storage,
+    pub rpc_list: HashSet<String>,
+}
+
+impl State {
+    fn method_in_log_list(&self, method: &str) -> bool {
+        if self.rpc_list.is_empty() {
+            return true;
+        }
+
+        self.rpc_list.contains(method)
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let configured = Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .option(BUCKET_OPTION)
+        .option(RPC_LIST_OPTION)
         .hook("rpc_command", on_hook_rpc_command)
         .dynamic()
         .configure()
@@ -74,6 +94,14 @@ async fn main() -> Result<()> {
     let rpc_path = Path::new(&cfg.lightning_dir).join(&cfg.rpc_file);
     let peer_id = get_my_peer_id(rpc_path).await?;
 
+    let rpc_list = configured
+        .option(&RPC_LIST_OPTION)?
+        .split(',')
+        .map(str::trim)
+        .filter(|method| !method.is_empty())
+        .map(str::to_owned)
+        .collect();
+
     let state = State {
         bucket_name: format!(
             "{}{}",
@@ -86,6 +114,7 @@ async fn main() -> Result<()> {
         // In GKE, these come from Workload Identity.
         client: Storage::builder().build().await?,
         peer_id,
+        rpc_list,
     };
 
     let plugin = configured.start(state).await?;
@@ -97,21 +126,25 @@ async fn main() -> Result<()> {
 async fn on_hook_rpc_command(p: Plugin<State>, v: JsonValue) -> Result<JsonValue> {
     let rpc_command_hook: RpcCommandEvent = serde_json::from_value(v)?;
 
-    let operator = rune_from_json_array(&rpc_command_hook.rpc_command.params);
-    let body = sanitize_json_array(rpc_command_hook.rpc_command.params);
+    if p.state()
+        .method_in_log_list(&rpc_command_hook.rpc_command.method)
+    {
+        let operator = rune_from_json_array(&rpc_command_hook.rpc_command.params);
+        let body = sanitize_json_array(rpc_command_hook.rpc_command.params);
 
-    upload_rpc_log(
-        &p.state().client,
-        &p.state().bucket_name,
-        &RpcLog {
-            method: &rpc_command_hook.rpc_command.method,
-            caller: operator,
-            request_id: rpc_command_hook.rpc_command.id,
-            body,
-            peer_id: &p.state().peer_id.to_string(),
-        },
-    )
-    .await?;
+        upload_rpc_log(
+            &p.state().client,
+            &p.state().bucket_name,
+            &RpcLog {
+                method: &rpc_command_hook.rpc_command.method,
+                caller: operator,
+                request_id: rpc_command_hook.rpc_command.id,
+                body,
+                peer_id: &p.state().peer_id.to_string(),
+            },
+        )
+        .await?;
+    }
 
     // We do not interrupt command execution
     Ok(json!({"result": "continue"}))
@@ -122,6 +155,7 @@ struct RpcLog<'a> {
     method: &'a str,
     request_id: JsonScalar,
     body: JsonObjectOrArray,
+    #[serde(skip_serializing_if = "Option::is_none")]
     caller: Option<String>,
     peer_id: &'a str,
 }

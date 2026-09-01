@@ -3,8 +3,8 @@
 The `rpc-log-plugin` records Core Lightning RPC requests as JSON objects in Google Cloud Storage.
 
 It is useful when you need a durable audit trail for debugging, operational analysis, or investigating how a node is
-being used. The plugin observes the `rpc_command` hook, replaces values of known sensitive fields with `"***"`, and
-uploads each request as a separate object.
+being used. The plugin observes selected calls through the `rpc_command` hook, replaces values of known sensitive
+fields with `"***"`, and uploads each request as a separate object.
 
 Objects are stored under the following prefix:
 
@@ -97,6 +97,7 @@ Add the plugin and bucket ID to `lightningd`'s configuration:
 ```ini
 plugin=/absolute/path/to/target/release/rpc-log-plugin
 log-bucket=my-cln-rpc-logs
+log-rpc-list=checkrune,commando,pay
 ```
 
 Alternatively, pass the same options on the command line:
@@ -104,11 +105,24 @@ Alternatively, pass the same options on the command line:
 ```bash
 lightningd \
   --plugin=/absolute/path/to/target/release/rpc-log-plugin \
-  --log-bucket=my-cln-rpc-logs
+  --log-bucket=my-cln-rpc-logs \
+  --log-rpc-list=checkrune,commando,pay
 ```
 
 The bucket must already exist when RPC requests are logged. Authentication failures, missing buckets, and upload
 errors are returned by the hook, so verify the setup outside production before relying on it.
+
+### Select RPC methods
+
+`log-rpc-list` controls which RPC methods are logged. The default is `checkrune`. Use a comma-separated list to select
+more than one method:
+
+```ini
+log-rpc-list=checkrune,commando,pay
+```
+
+Whitespace around method names is ignored. Method names must otherwise match exactly. Calls to methods not present in
+this list continue normally without being uploaded.
 
 ## Log format
 
@@ -127,14 +141,17 @@ Each uploaded object contains one JSON document:
 }
 ```
 
-The `caller` field contains a value of `operator` tag (if present in rune). Returns the first finding. You can create
-such runes as follows:
+The `caller` field contains the value of the first `operator#<name>` comment found in a rune passed through named JSON
+parameters. The caller field exists only if the request has rune, the rune can be decoded and has such tag.
 
-```shell
-lightning-cli createrune -k "restrictions"='[["operator#Name"]]'
+Create a rune carrying this comment with:
+
+```bash
+lightning-cli createrune -k restrictions='[["operator#Name"]]'
 ```
 
-Then, for the given rune plugin will save "Name" in the `caller` log field.
+When that rune is supplied as a named `rune` parameter, the plugin records `"Name"` in `caller` and redacts the rune
+itself from `body`. The comment is descriptive metadata and does not restrict authorization.
 
 The request body may still contain financially or personally sensitive information that is not covered by the danger
 field list, such as invoices, labels, descriptions, addresses, routes, and payment hashes. Restrict access to the
