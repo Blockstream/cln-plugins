@@ -4,15 +4,13 @@ use crate::rune::rune_tag;
 use anyhow::{Context, Result};
 use cln_plugin::options::{ConfigOption, DefaultStringConfigOption, StringConfigOption};
 use cln_plugin::{Builder, Plugin};
-use cln_rpc::ClnRpc;
 use cln_rpc::hooks::events::RpcCommandEvent;
-use cln_rpc::model::requests::GetinfoRequest;
-use cln_rpc::primitives::{JsonObjectOrArray, JsonScalar, PublicKey};
+use cln_rpc::primitives::{JsonObjectOrArray, JsonScalar};
+use google_cloud_auth::credentials::anonymous::Builder as AnonymousCredentials;
 use google_cloud_storage::client::Storage;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
@@ -36,12 +34,11 @@ const DANGER_FIELDS: [&str; 13] = [
     "mnemonic",
 ];
 
-// const SILENT_OPTION_NAME: &str = "silent";
-// pub const SILENT_OPTION: DefaultBooleanConfigOption = ConfigOption::new_bool_with_default(
-//     SILENT_OPTION_NAME,
-//     false,
-//     "If specified - plugin will not send logs to the GCS bucket",
-// );
+const EMULATOR_OPTION_NAME: &str = "log-emulator-host";
+pub const EMULATOR_OPTION: StringConfigOption = ConfigOption::new_str_no_default(
+    EMULATOR_OPTION_NAME,
+    "If specified - plugin will send logs to the local bucket emulator (see tests)",
+);
 
 const RPC_LIST_OPTION_NAME: &str = "log-rpc-list";
 const RPC_LIST_OPTION: DefaultStringConfigOption = ConfigOption::new_str_with_default(
@@ -59,10 +56,9 @@ const GCS_RESOURCE_NAME_PREFIX: &str = "projects/_/buckets/";
 
 #[derive(Clone)]
 struct State {
-    pub peer_id: PublicKey,
-    pub bucket_name: String,
-    pub client: Storage,
-    pub rpc_list: HashSet<String>,
+    bucket_name: String,
+    client: Storage,
+    rpc_list: HashSet<String>,
 }
 
 impl State {
@@ -80,6 +76,7 @@ async fn main() -> Result<()> {
     let configured = Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .option(BUCKET_OPTION)
         .option(RPC_LIST_OPTION)
+        .option(EMULATOR_OPTION)
         .hook("rpc_command", on_hook_rpc_command)
         .dynamic()
         .configure()
@@ -89,10 +86,6 @@ async fn main() -> Result<()> {
         // CLN shut down during configuration
         return Ok(());
     };
-
-    let cfg = configured.configuration();
-    let rpc_path = Path::new(&cfg.lightning_dir).join(&cfg.rpc_file);
-    let peer_id = get_my_peer_id(rpc_path).await?;
 
     let rpc_list = configured
         .option(&RPC_LIST_OPTION)?
@@ -110,10 +103,7 @@ async fn main() -> Result<()> {
                 .option(&BUCKET_OPTION)?
                 .context("No bucket name provided")?
         ),
-        // Automatically uses Application Default Credentials.
-        // In GKE, these come from Workload Identity.
-        client: Storage::builder().build().await?,
-        peer_id,
+        client: storage_client(configured.option(&EMULATOR_OPTION)?).await?,
         rpc_list,
     };
 
@@ -121,6 +111,23 @@ async fn main() -> Result<()> {
     plugin.join().await?;
 
     Ok(())
+}
+
+async fn storage_client(emulator_endpoint: Option<String>) -> Result<Storage> {
+    let builder = Storage::builder();
+
+    if let Some(endpoint) = emulator_endpoint {
+        // Using local emulator without auth
+        return Ok(builder
+            .with_endpoint(endpoint)
+            .with_credentials(AnonymousCredentials::new().build())
+            .build()
+            .await?);
+    }
+
+    // Uses Application Default Credentials.
+    // In GKE, these come from Workload Identity.
+    Ok(builder.build().await?)
 }
 
 async fn on_hook_rpc_command(p: Plugin<State>, v: JsonValue) -> Result<JsonValue> {
@@ -140,7 +147,6 @@ async fn on_hook_rpc_command(p: Plugin<State>, v: JsonValue) -> Result<JsonValue
                 caller: operator,
                 request_id: rpc_command_hook.rpc_command.id,
                 body,
-                peer_id: &p.state().peer_id.to_string(),
             },
         )
         .await?;
@@ -157,7 +163,6 @@ struct RpcLog<'a> {
     body: JsonObjectOrArray,
     #[serde(skip_serializing_if = "Option::is_none")]
     caller: Option<String>,
-    peer_id: &'a str,
 }
 
 async fn upload_rpc_log(client: &Storage, bucket: &str, log: &RpcLog<'_>) -> Result<String> {
@@ -171,12 +176,6 @@ async fn upload_rpc_log(client: &Storage, bucket: &str, log: &RpcLog<'_>) -> Res
         .await?;
 
     Ok(object_name)
-}
-
-async fn get_my_peer_id(rpc_path: PathBuf) -> Result<PublicKey> {
-    let mut cln_rpc = ClnRpc::new(&rpc_path).await?;
-    let info = cln_rpc.call_typed(&GetinfoRequest {}).await?;
-    Ok(info.id)
 }
 
 /// Recursively checks JSON (JsonObjectOrArray) for rune and outputs its operator tag if present

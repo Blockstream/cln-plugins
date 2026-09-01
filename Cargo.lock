@@ -2995,6 +2995,7 @@ dependencies = [
  "base64 0.23.1",
  "cln-plugin",
  "cln-rpc",
+ "google-cloud-auth",
  "google-cloud-storage",
  "serde",
  "serde_json",
