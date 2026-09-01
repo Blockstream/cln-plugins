@@ -122,10 +122,19 @@ Each uploaded object contains one JSON document:
     "bolt11": "lnbc...",
     "payment_secret": "***"
   },
-  "caller": null,
+  "caller": "Name",
   "peer_id": "02..."
 }
 ```
+
+The `caller` field contains a value of `operator` tag (if present in rune). Returns the first finding. You can create
+such runes as follows:
+
+```shell
+lightning-cli createrune -k "restrictions"='[["operator#Name"]]'
+```
+
+Then, for the given rune plugin will save "Name" in the `caller` log field.
 
 The request body may still contain financially or personally sensitive information that is not covered by the danger
 field list, such as invoices, labels, descriptions, addresses, routes, and payment hashes. Restrict access to the

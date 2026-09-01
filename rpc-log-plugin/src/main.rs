@@ -1,3 +1,6 @@
+mod rune;
+
+use crate::rune::rune_tag;
 use anyhow::{Context, Result};
 use cln_plugin::options::{ConfigOption, StringConfigOption};
 use cln_plugin::{Builder, Plugin};
@@ -12,6 +15,8 @@ use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
+
+const RUNE_KEY: &str = "rune";
 
 // A list of fields to remove from logs.
 const DANGER_FIELDS: [&str; 13] = [
@@ -92,24 +97,15 @@ async fn main() -> Result<()> {
 async fn on_hook_rpc_command(p: Plugin<State>, v: JsonValue) -> Result<JsonValue> {
     let rpc_command_hook: RpcCommandEvent = serde_json::from_value(v)?;
 
-    let body = match rpc_command_hook.rpc_command.params {
-        JsonObjectOrArray::Object(object) => JsonObjectOrArray::Object(
-            object
-                .into_iter()
-                .map(|(key, object)| (key, sanitize_json(object)))
-                .collect(),
-        ),
-        JsonObjectOrArray::Array(array) => {
-            JsonObjectOrArray::Array(array.into_iter().map(sanitize_json).collect())
-        }
-    };
+    let operator = rune_from_json_array(&rpc_command_hook.rpc_command.params);
+    let body = sanitize_json_array(rpc_command_hook.rpc_command.params);
 
     upload_rpc_log(
         &p.state().client,
         &p.state().bucket_name,
         &RpcLog {
             method: &rpc_command_hook.rpc_command.method,
-            caller: None,
+            caller: operator,
             request_id: rpc_command_hook.rpc_command.id,
             body,
             peer_id: &p.state().peer_id.to_string(),
@@ -126,7 +122,7 @@ struct RpcLog<'a> {
     method: &'a str,
     request_id: JsonScalar,
     body: JsonObjectOrArray,
-    caller: Option<&'a str>,
+    caller: Option<String>,
     peer_id: &'a str,
 }
 
@@ -149,22 +145,73 @@ async fn get_my_peer_id(rpc_path: PathBuf) -> Result<PublicKey> {
     Ok(info.id)
 }
 
-/// Recursively checks JSON for sensitive (danger) keys and fills their values with "***"
+/// Recursively checks JSON (JsonObjectOrArray) for rune and outputs its operator tag if present
+/// (We need this because rpc_command hook defines params as JsonObjectOrArray)
+fn rune_from_json_array(value: &JsonObjectOrArray) -> Option<String> {
+    match value {
+        JsonObjectOrArray::Object(map) => map.iter().find_map(|(k, v)| rune_from_json_value(k, v)),
+        JsonObjectOrArray::Array(arr) => arr.iter().find_map(|v| rune_from_json_value("", v)),
+    }
+}
+
+/// Recursively checks JSON (Value) for rune and outputs its operator tag if present
+fn rune_from_json_value(key: &str, value: &JsonValue) -> Option<String> {
+    if key.to_lowercase().contains(RUNE_KEY)
+        && let Some(rune) = value.as_str()
+        && let Ok(result) = rune_tag(rune)
+        && let Some(operator) = result
+    {
+        return Some(operator);
+    }
+
+    match value {
+        JsonValue::Object(map) => map.iter().find_map(|(k, v)| rune_from_json_value(k, v)),
+        JsonValue::Array(arr) => arr.iter().find_map(|v| rune_from_json_value("", v)),
+        _ => None,
+    }
+}
+
+/// Recursively checks JSON (JsonObjectOrArray) for sensitive (danger) keys and fills their values with "***"
+/// (We need this because rpc_command hook defines params as JsonObjectOrArray)
+fn sanitize_json_array(value: JsonObjectOrArray) -> JsonObjectOrArray {
+    match value {
+        JsonObjectOrArray::Object(map) => JsonObjectOrArray::Object(
+            map.into_iter()
+                .map(|(k, v)| {
+                    let result = sanitize_json_value(&k, v);
+                    (k, result)
+                })
+                .collect(),
+        ),
+        JsonObjectOrArray::Array(arr) => JsonObjectOrArray::Array(
+            arr.into_iter()
+                .map(|v| sanitize_json_value("", v))
+                .collect(),
+        ),
+    }
+}
+
+/// Recursively checks JSON (Value) for sensitive (danger) keys and fills their values with "***"
 /// Credits to @erdoganishe
-fn sanitize_json(value: JsonValue) -> JsonValue {
+fn sanitize_json_value(key: &str, value: JsonValue) -> JsonValue {
+    if is_sensitive_key(key) {
+        return JsonValue::String("***".into());
+    }
+
     match value {
         JsonValue::Object(map) => JsonValue::Object(
             map.into_iter()
                 .map(|(k, v)| {
-                    if is_sensitive_key(&k) {
-                        (k, JsonValue::String("***".into()))
-                    } else {
-                        (k, sanitize_json(v))
-                    }
+                    let result = sanitize_json_value(&k, v);
+                    (k, result)
                 })
                 .collect(),
         ),
-        JsonValue::Array(arr) => JsonValue::Array(arr.into_iter().map(sanitize_json).collect()),
+        JsonValue::Array(arr) => JsonValue::Array(
+            arr.into_iter()
+                .map(|v| sanitize_json_value("", v))
+                .collect(),
+        ),
         other => other,
     }
 }
@@ -176,4 +223,57 @@ fn is_sensitive_key(key_to_check: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{rune_from_json_value, sanitize_json_value};
+    use anyhow::Result;
+
+    #[test]
+    fn test_sanitize_json() -> Result<()> {
+        let example = r#"{"rune":"12345"}"#;
+        let sanitize_example = sanitize_json_value("", serde_json::from_str(example)?);
+        let result_json = sanitize_example.to_string();
+        assert_eq!(result_json, r#"{"rune":"***"}"#);
+        Ok(())
+    }
+
+    #[test]
+    fn test_sanitize_json_arr() -> Result<()> {
+        let example = r#"{"key":[{"rune_1":"12345"},{"rune_2":"12345"}]}"#;
+        let sanitize_example = sanitize_json_value("", serde_json::from_str(example)?);
+        let result_json = sanitize_example.to_string();
+        assert_eq!(
+            result_json,
+            r#"{"key":[{"rune_1":"***"},{"rune_2":"***"}]}"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_sanitize_json_full_object() -> Result<()> {
+        let example = r#"{"secret":{"key":"value"}}"#;
+        let sanitize_example = sanitize_json_value("", serde_json::from_str(example)?);
+        let result_json = sanitize_example.to_string();
+        assert_eq!(result_json, r#"{"secret":"***"}"#);
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_operator() -> Result<()> {
+        let example =
+            r#"{"params":{"rune":"_A7OO-xeVLnHX-zRLOhNGg3DDDMCvET1DZN-72WkbkVvcGVyYXRvciNPbGVn"}}"#;
+        let result_json = rune_from_json_value("", &serde_json::from_str(example)?);
+        assert_eq!(result_json, Some("Oleg".to_owned()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_operator_in_arr() -> Result<()> {
+        let example = r#"{"params":[{"rune":"_A7OO-xeVLnHX-zRLOhNGg3DDDMCvET1DZN-72WkbkVvcGVyYXRvciNPbGVn"}]}"#;
+        let result_json = rune_from_json_value("", &serde_json::from_str(example)?);
+        assert_eq!(result_json, Some("Oleg".to_owned()));
+        Ok(())
+    }
 }
