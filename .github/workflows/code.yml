@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Check formatting
+        run: task fmt:check
+
+      - name: Run clippy
+        run: task lint
+
+      - name: Run tests
+        run: task test

@@ -76,49 +76,29 @@ fn encode_envelope(envelope: EventEnvelope) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Convenience function to handle events.
-macro_rules! define_event_handler {
-    ($fn_name:ident, $event_type:expr) => {
-        pub async fn $fn_name(p: Plugin<MessageBroker>, v: JsonValue) -> Result<()> {
-            debug!(
-                "handled event, event_type={}, payload={:?}",
-                $event_type, &v
-            );
-            let state = p.state();
-            state
-                .publish_bytes(encode_envelope(
-                    new_envelope(
-                        $event_type,
-                        state.source_kind(),
-                        state.source_node_id(),
-                        state.producer_version(),
-                        &v,
-                    )
-                    .await?,
-                )?)
-                .await
-        }
-    };
-}
+pub async fn on_event(p: Plugin<MessageBroker>, event_type: String, v: JsonValue) -> Result<()> {
+    if event_type == "warning" {
+        return on_warning(p, v).await;
+    }
 
-// Define event handler.
-define_event_handler!(on_connect, "connect");
-define_event_handler!(on_disconnect, "disconnect");
-define_event_handler!(on_invoice_creation, "invoice_creation");
-define_event_handler!(on_invoice_payment, "invoice_payment");
-define_event_handler!(on_channel_opened, "channel_opened");
-define_event_handler!(on_channel_open_failed, "channel_open_failed");
-define_event_handler!(on_channel_state_changed, "channel_state_changed");
-define_event_handler!(on_forward_event, "forward_event");
-define_event_handler!(on_block_added, "block_added");
-define_event_handler!(on_custommsg, "custommsg");
-define_event_handler!(on_sendpay_success, "sendpay_success");
-define_event_handler!(on_sendpay_failure, "sendpay_failure");
-define_event_handler!(on_coin_movement, "coin_movement");
-define_event_handler!(on_openchannel_peer_sigs, "openchannel_peer_sigs");
-define_event_handler!(on_onionmessage_forward_fail, "onionmessage_forward_fail");
-define_event_handler!(on_pay_part_start, "pay_part_start");
-define_event_handler!(on_pay_part_end, "pay_part_end");
+    debug!(
+        "handled event, event_type={}, payload={:?}",
+        &event_type, &v
+    );
+    let state = p.state();
+    state
+        .publish_bytes(encode_envelope(
+            new_envelope(
+                &event_type,
+                state.source_kind(),
+                state.source_node_id(),
+                state.producer_version(),
+                &v,
+            )
+            .await?,
+        )?)
+        .await
+}
 
 pub async fn on_warning(_p: Plugin<MessageBroker>, _v: JsonValue) -> Result<()> {
     // TODO: no-op for now, will eff-up integration test teardown otherwise as

@@ -1,0 +1,27 @@
+version: "3"
+
+tasks:
+  fmt:
+    desc: "Format Rust code"
+    cmds: [cargo fmt]
+
+  fmt:check:
+    desc: "Check Rust code formatting"
+    cmds: [ cargo fmt --check]
+
+  lint:
+    desc: "Lint Rust code"
+    cmds: [cargo clippy --all-targets --all-features -- -D warnings]
+
+  test:
+    desc: "Test Rust code"
+    cmds:
+      # We want to be sure every workspace member is always tested.
+      # However, some members need special parameters
+      # (e.g. event-plugin tests must run in a single thread),
+      # so a single 'cargo test' can't cover everything correctly.
+      # Therefore, task:test runs every workspace member EXCEPT the
+      # excluded ones (e.g. event-plugin), and the excluded members
+      # are run separately with their own command.
+      - cargo test --workspace --exclude event-plugin
+      - cargo test -p event-plugin -- --test-threads=1

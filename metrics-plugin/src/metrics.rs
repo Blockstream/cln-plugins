@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use cln_rpc::notifications::{ChannelStateChangedNotification, ForwardEventNotification};
 use prometheus::{
     Encoder, Gauge, GaugeVec, IntCounter, IntCounterVec, Opts, TextEncoder,
     core::{Collector, Desc},
@@ -84,6 +85,39 @@ impl EventCounters {
                 &["old_state", "new_state"],
             )?)?,
         })
+    }
+
+    pub fn on_forward_event(&self, event: &ForwardEventNotification) {
+        self.forward_events_total
+            .with_label_values(&[event.status.to_string()])
+            .inc();
+    }
+
+    pub fn on_channel_opened(&self) {
+        self.channel_opened_total.inc()
+    }
+
+    pub fn on_channel_state_changed(&self, event: &ChannelStateChangedNotification) {
+        let old = event
+            .old_state
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let new = event.new_state.to_string();
+
+        self.channel_state_changes_total
+            .with_label_values(&[&old, &new])
+            .inc();
+
+        tracing::info!(
+            peer = %event.peer_id,
+            old_state = old,
+            new_state = new,
+            "channel_state_changed"
+        );
+    }
+
+    pub fn on_htlc_accepted(&self) {
+        self.htlc_accepted_total.inc();
     }
 }
 
