@@ -83,14 +83,14 @@ The image does not run the plugin itself. Instead, it copies the compiled plugin
 Images are published using the following naming convention:
 
 ```
-blockstream/cln-plugins/<plugin-name>:<version>
+blockstream/cln-plugins-<plugin-name>:<version>
 ```
 
 For example:
 ```
-blockstream/cln-plugins/rpc-log-plugin:v1.2.3
-blockstream/cln-plugins/event-plugin:v1.2.3
-blockstream/cln-plugins/metrics-plugin:v1.2.3
+blockstream/cln-plugins-rpc-log-plugin:v1.2.3
+blockstream/cln-plugins-event-plugin:v1.2.3
+blockstream/cln-plugins-metrics-plugin:v1.2.3
 ```
 
 ### Install a plugin
@@ -99,7 +99,7 @@ Mount the directory where the plugin should be installed as `/plugins`:
 ```bash
 docker run --rm \
   -v /path/to/plugins:/plugins \
-  blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+  blockstream/cln-plugins-rpc-log-plugin:v1.2.3
 ```
 
 By default, the plugin is installed as:
@@ -125,7 +125,7 @@ docker run --rm \
   -e TARGET_UID=1000 \
   -e TARGET_GID=1000 \
   -e TARGET_MODE=0750 \
-  blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+  blockstream/cln-plugins-rpc-log-plugin:v1.2.3
 ```
 
 To install the binary under a custom path:
@@ -133,7 +133,7 @@ To install the binary under a custom path:
 docker run --rm \
   -v /path/to/plugins:/plugins \
   -e TARGET_PATH=/plugins/custom-rpc-log-plugin \
-  blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+  blockstream/cln-plugins-rpc-log-plugin:v1.2.3
 ```
 The installer container must have permission to change the ownership and mode of files in the mounted destination. In particular, setting arbitrary `TARGET_UID` or `TARGET_GID` generally requires running the installer as root.
 
@@ -144,7 +144,7 @@ Installer images can also be used as one-shot services in Docker Compose with a 
 ```yaml
 services:
   rpc-log-plugin-installer:
-    image: blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+    image: blockstream/cln-plugins-rpc-log-plugin:v1.2.3
     volumes:
       - plugins:/plugins
 

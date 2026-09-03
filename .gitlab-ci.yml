@@ -37,7 +37,7 @@ stages:
   script:
     - |
       VERSION="${CI_COMMIT_TAG#*/}"
-      IMAGE="blockstream/cln-plugins/${PLUGIN_NAME}"
+      IMAGE="blockstream/cln-plugins-${PLUGIN_NAME}"
 
       echo "Plugin:  ${PLUGIN_NAME}"
       echo "Version: ${VERSION}"
