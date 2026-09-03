@@ -1,0 +1,75 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: none
+  CI_DISPOSABLE_ENVIRONMENT: "true"
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_BUILDKIT: 1
+
+default:
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      command: ["dockerd", "--host=tcp://0.0.0.0:2375"]
+      alias: "docker"
+  before_script:
+    - echo "$DOCKERHUB_PW" | docker login -u $DOCKERHUB_USER --password-stdin
+    - docker info
+    - |
+      docker buildx create \
+      --driver=docker-container \
+      --name=buildkit-builder \
+      --use \
+      --platform linux/amd64,linux/arm64
+  tags:
+    - cloud
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - unknown_failure
+      - stuck_or_timeout_failure
+
+stages:
+  - build
+
+.build:docker:plugin:
+  stage: build
+  script:
+    - |
+      VERSION="${CI_COMMIT_TAG#*/}"
+      IMAGE="blockstream/cln-plugins/${PLUGIN_NAME}"
+
+      echo "Plugin:  ${PLUGIN_NAME}"
+      echo "Version: ${VERSION}"
+      echo "Image:   ${IMAGE}:${VERSION}"
+
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --push \
+        --build-arg PLUGIN_NAME="${PLUGIN_NAME}" \
+        -t "${IMAGE}:${VERSION}" \
+        .
+
+build:docker:event-plugin:
+  extends: .build:docker:plugin
+  variables:
+    PLUGIN_NAME: event-plugin
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^event-plugin\/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/'
+    - when: never
+
+build:docker:metrics-plugin:
+  extends: .build:docker:plugin
+  variables:
+    PLUGIN_NAME: metrics-plugin
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^metrics-plugin\/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/'
+    - when: never
+
+build:docker:rpc-log-plugin:
+  extends: .build:docker:plugin
+  variables:
+    PLUGIN_NAME: rpc-log-plugin
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^rpc-log-plugin\/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$/'
+    - when: never

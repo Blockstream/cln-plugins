@@ -77,6 +77,88 @@ You can also build only the plugin you need:
 cargo build --release --package metrics-plugin
 ```
 
+## Docker installer images
+The image does not run the plugin itself. Instead, it copies the compiled plugin binary into a directory mounted from the host or another container. This is useful when Core Lightning and its plugins are deployed with Docker or Docker Compose and the plugin binary needs to be installed into a shared volume.
+
+Images are published using the following naming convention:
+
+```
+blockstream/cln-plugins/<plugin-name>:<version>
+```
+
+For example:
+```
+blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+blockstream/cln-plugins/event-plugin:v1.2.3
+blockstream/cln-plugins/metrics-plugin:v1.2.3
+```
+
+### Install a plugin
+
+Mount the directory where the plugin should be installed as `/plugins`:
+```bash
+docker run --rm \
+  -v /path/to/plugins:/plugins \
+  blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+```
+
+By default, the plugin is installed as:
+```
+0:0 755 /plugins/rpc-log-plugin
+```
+
+### Installer configuration
+
+The installer can be configured through environment variables:
+
+| Variable |	Default |	Description |
+|---|---|---|
+| TARGET_UID |	0 |	UID assigned to the installed binary |
+| TARGET_GID |	0 |	GID assigned to the installed binary |
+| TARGET_MODE |	0755 |	File permissions assigned to the installed binary |
+| TARGET_PATH |	`/plugins/<plugin-name>` |	Destination path of the installed binary |
+
+For example:
+```bash
+docker run --rm \
+  -v /path/to/plugins:/plugins \
+  -e TARGET_UID=1000 \
+  -e TARGET_GID=1000 \
+  -e TARGET_MODE=0750 \
+  blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+```
+
+To install the binary under a custom path:
+```bash
+docker run --rm \
+  -v /path/to/plugins:/plugins \
+  -e TARGET_PATH=/plugins/custom-rpc-log-plugin \
+  blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+```
+The installer container must have permission to change the ownership and mode of files in the mounted destination. In particular, setting arbitrary `TARGET_UID` or `TARGET_GID` generally requires running the installer as root.
+
+### Docker Compose
+
+Installer images can also be used as one-shot services in Docker Compose with a shared volume:
+
+```yaml
+services:
+  rpc-log-plugin-installer:
+    image: blockstream/cln-plugins/rpc-log-plugin:v1.2.3
+    volumes:
+      - plugins:/plugins
+
+  lightning:
+    # Your Core Lightning image
+    volumes:
+      - plugins:/plugins
+
+volumes:
+  plugins:
+```
+
+This allows the installer container to place the plugin binary into the shared volume before Core Lightning uses it.
+
 ## Development
 
 Run the standard checks from the repository root:
