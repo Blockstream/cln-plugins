@@ -1,0 +1,18 @@
+[package]
+name = "rpc-log-plugin"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+cln-plugin = { version = "0.7" }
+tokio = { version = "1", features = ["full"] }
+anyhow = { version = "1" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+cln-rpc = { version = "0.7" }
+google-cloud-storage = "1"
+google-cloud-auth = { version = "1", default-features = false }
+time = { version = "0.3", features = ["formatting"] }
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.23"

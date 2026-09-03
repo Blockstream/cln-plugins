@@ -17,15 +17,16 @@ A growing collection of plugins for [Core Lightning](https://github.com/Elements
 Running a Core Lightning node often means connecting it to the rest of your infrastructure: monitoring, event pipelines,
 dashboards, alerts, and more. This repository keeps those integrations small, composable, and open source.
 
-Each plugin lives in its own workspace crate and can be built, configured, and run independently. There are two plugins
+Each plugin lives in its own workspace crate and can be built, configured, and run independently. There are three plugins
 today—and the collection is designed to grow.
 
 ## Plugins
 
-| Plugin                               | What it does                                                     | Integrates with |
-|--------------------------------------|------------------------------------------------------------------|-----------------|
-| [`event-plugin`](./event-plugin)     | Publishes CLN events and hook data to a message broker           | RabbitMQ        |
-| [`metrics-plugin`](./metrics-plugin) | Exposes node, funds, liquidity, channel, peer, and event metrics | Prometheus      |
+| Plugin                               | What it does                                                       | Integrates with      |
+|--------------------------------------|--------------------------------------------------------------------|----------------------|
+| [`event-plugin`](./event-plugin)     | Publishes CLN events and hook data to a message broker             | RabbitMQ             |
+| [`metrics-plugin`](./metrics-plugin) | Exposes node, funds, liquidity, channel, peer, and event metrics   | Prometheus           |
+| [`rpc-log-plugin`](./rpc-log-plugin) | Stores selected, sanitized RPC requests as individual JSON objects | Google Cloud Storage |
 
 ### Event plugin
 
@@ -45,6 +46,18 @@ Use it as the foundation for dashboards, alerts, and day-to-day node monitoring.
 
 [Configuration and metric reference →](./metrics-plugin/README.md)
 
+### RPC log plugin
+
+Keep a durable audit trail of requests made to your node. The plugin observes selected calls through CLN's
+`rpc_command` hook, redacts known sensitive fields, and uploads each request as a separate JSON object to Google Cloud
+Storage.
+
+It logs `checkrune` by default, making it useful for auditing rune-authorized calls received through the commando
+plugin. The method list is configurable, and rune comments in the form `operator#Name` can identify callers without
+retaining the rune itself.
+
+[Configuration, security, and bucket setup →](./rpc-log-plugin/README.md)
+
 ## Quick start
 
 ### Prerequisites
@@ -52,7 +65,7 @@ Use it as the foundation for dashboards, alerts, and day-to-day node monitoring.
 - A working Core Lightning node
 - A recent stable Rust toolchain
 - Protocol Buffers compiler (`protoc`) to build `event-plugin`
-- RabbitMQ for `event-plugin`, or Prometheus for `metrics-plugin`
+- RabbitMQ for `event-plugin`, Prometheus for `metrics-plugin`, or a Google Cloud Storage bucket for `rpc-log-plugin`
 
 ### Build
 
@@ -69,6 +82,7 @@ The executables are created in `target/release/`:
 ```text
 target/release/event-plugin
 target/release/metrics-plugin
+target/release/rpc-log-plugin
 ```
 
 You can also build only the plugin you need:
