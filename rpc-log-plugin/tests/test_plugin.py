@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 import urllib.error
@@ -16,6 +17,9 @@ PROJECT = "test-project"
 
 CHECKRUNE_BUCKET = "rpc-log-plugin-test"
 COMMANDO_BUCKET = "rpc-log-plugin-commando-test"
+
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+REAL_GCS_BUCKET = os.environ.get("RPC_LOG_TEST_BUCKET")
 
 
 def gcs_request(method, path, body=None):
@@ -145,3 +149,25 @@ def test_invoice_through_commando_is_uploaded(node_factory, fake_gcs):  # noqa: 
         "method": "invoice",
         "params": invoice_params,
     }
+
+
+@pytest.mark.skipif(
+    not GOOGLE_APPLICATION_CREDENTIALS or not REAL_GCS_BUCKET,
+    reason="set GOOGLE_APPLICATION_CREDENTIALS and RPC_LOG_TEST_BUCKET",
+)
+def test_service_account_can_upload(node_factory):
+    credentials = Path(GOOGLE_APPLICATION_CREDENTIALS)
+    assert credentials.is_file(), f"Credentials file not found: {credentials}"
+    assert PLUGIN_PATH.exists(), f"Build the plugin first: {PLUGIN_PATH}"
+
+    node = node_factory.get_node(
+        options={
+            "plugin": str(PLUGIN_PATH),
+            "log-bucket": REAL_GCS_BUCKET,
+        },
+        start=True,
+    )
+
+    rune = node.rpc.createrune(restrictions=[["operator#ServiceAccountTest"]])["rune"]
+    result = node.rpc.checkrune(rune=rune)
+    assert result["valid"]
