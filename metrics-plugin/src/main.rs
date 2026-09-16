@@ -173,6 +173,10 @@ fn spawn_refresh_loop(
     });
 }
 
+/// Tokens shorter than this are rejected at startup - long enough to rule out trivially
+/// guessable values without dictating a specific format.
+const MIN_TOKEN_LEN: usize = 16;
+
 /// Reads the bearer token from `path`, trimming surrounding whitespace so a trailing newline
 /// left by `echo` or an editor doesn't become part of the expected token.
 async fn read_token_file(path: &str) -> Result<Arc<str>> {
@@ -182,6 +186,11 @@ async fn read_token_file(path: &str) -> Result<Arc<str>> {
     let token = contents.trim();
     if token.is_empty() {
         return Err(anyhow::anyhow!("metrics-token-file {path} is empty"));
+    }
+    if token.len() < MIN_TOKEN_LEN {
+        return Err(anyhow::anyhow!(
+            "metrics-token-file {path} holds a token shorter than {MIN_TOKEN_LEN} characters; use a longer, random value"
+        ));
     }
     Ok(Arc::from(token))
 }
@@ -193,4 +202,62 @@ async fn rpc_status(plugin: Plugin<PluginState>, _args: Value) -> Result<Value, 
         "channels": cache.channels.len(),
         "blockheight": cache.node.blockheight,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn tempfile_with_contents(contents: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "metrics-plugin-test-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn trims_whitespace_and_trailing_newline() {
+        let file = tempfile_with_contents("  a-long-enough-token\n");
+        let token = read_token_file(file.to_str().unwrap()).await.unwrap();
+        assert_eq!(&*token, "a-long-enough-token");
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_file() {
+        let file = tempfile_with_contents("   \n");
+        let err = read_token_file(file.to_str().unwrap()).await.unwrap_err();
+        assert!(err.to_string().contains("is empty"));
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_token_shorter_than_minimum() {
+        let file = tempfile_with_contents("short\n");
+        let err = read_token_file(file.to_str().unwrap()).await.unwrap_err();
+        assert!(err.to_string().contains("shorter than"));
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn accepts_token_at_exactly_the_minimum_length() {
+        let token = "a".repeat(MIN_TOKEN_LEN);
+        let file = tempfile_with_contents(&token);
+        let read = read_token_file(file.to_str().unwrap()).await.unwrap();
+        assert_eq!(&*read, token.as_str());
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_file() {
+        let err = read_token_file("/nonexistent/metrics-token")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
 }

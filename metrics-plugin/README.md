@@ -26,8 +26,12 @@ e.g.:
 
 ```
 install -m 600 /dev/null /path/to/metrics-token
-echo -n "changeme" > /path/to/metrics-token
+openssl rand -hex 32 > /path/to/metrics-token
 ```
+
+The plugin rejects tokens shorter than 16 characters at startup (and an empty file), to catch
+weak or placeholder values before `/metrics` is ever exposed. Generate a long, random token rather
+than a memorable password - e.g. `openssl rand -hex 32` above.
 
 Example CLN config:
 
@@ -41,7 +45,7 @@ metrics-token-file=/path/to/metrics-token
 Scrape it with:
 
 ```
-curl -H "Authorization: Bearer changeme" http://127.0.0.1:9750/metrics
+curl -H "Authorization: Bearer $(cat /path/to/metrics-token)" http://127.0.0.1:9750/metrics
 ```
 
 Prometheus scrape config equivalent (Prometheus itself supports reading the token from a file
