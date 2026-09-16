@@ -6,12 +6,28 @@ Core Lightning plugin that exposes node liquidity metrics via a Prometheus `/met
 
 ## Configuration
 
-Both options are set as CLN plugin options (e.g. in `config` or passed via `--plugin`):
+These are set as CLN plugin options (e.g. in `config` or passed via `--plugin`):
 
-| Option              | Required | Default | Description                                                            |
-|---------------------|----------|---------|------------------------------------------------------------------------|
-| `--metrics-addr`    | yes      | -       | Address and port to expose `/metrics` on (e.g. `127.0.0.1:9750`)       |
-| `--metrics-refresh` | no       | `30`    | How often (seconds) to refresh node data for gauge metrics. Minimum 5. |
+| Option                    | Required                                         | Default | Description                                                                  |
+|---------------------------|---------------------------------------------------|---------|--------------------------------------------------------------------------------|
+| `--metrics-addr`          | yes                                               | -       | Address and port to expose `/metrics` on (e.g. `127.0.0.1:9750`)             |
+| `--metrics-refresh`       | no                                                | `30`    | How often (seconds) to refresh node data for gauge metrics. Minimum 5.       |
+| `--metrics-token-file`    | yes, unless `--metrics-disable-auth` is set       | -       | Path to a file containing the bearer token required to access `/metrics`.    |
+| `--metrics-disable-auth`  | no                                                | `false` | Serve `/metrics` without authentication. **Insecure** - local/dev use only.  |
+
+The plugin refuses to start unless either `--metrics-token-file` or `--metrics-disable-auth` is
+set, so a deployment can't accidentally expose `/metrics` without making an explicit choice. When
+`--metrics-disable-auth` is used, the plugin logs a warning on startup.
+
+The token is read once at startup from the given file (surrounding whitespace is trimmed), so it
+never appears in the process list, CLN config file, or shell history the way a plain
+`--metrics-token=...` value would. Keep the file's permissions restricted to the user CLN runs as,
+e.g.:
+
+```
+install -m 600 /dev/null /path/to/metrics-token
+echo -n "changeme" > /path/to/metrics-token
+```
 
 Example CLN config:
 
@@ -19,6 +35,25 @@ Example CLN config:
 plugin=/path/to/metrics-plugin
 metrics-addr=127.0.0.1:9750
 metrics-refresh=15
+metrics-token-file=/path/to/metrics-token
+```
+
+Scrape it with:
+
+```
+curl -H "Authorization: Bearer changeme" http://127.0.0.1:9750/metrics
+```
+
+Prometheus scrape config equivalent (Prometheus itself supports reading the token from a file
+directly, so it also never has to hold the secret in its own config):
+
+```yaml
+scrape_configs:
+  - job_name: cln-metrics
+    authorization:
+      credentials_file: /path/to/metrics-token
+    static_configs:
+      - targets: ["127.0.0.1:9750"]
 ```
 
 ---
