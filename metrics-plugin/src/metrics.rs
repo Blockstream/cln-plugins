@@ -554,7 +554,7 @@ fn is_authorized(request: &Request, token: &str) -> bool {
 }
 
 async fn require_bearer_token(
-    State(token): State<Arc<str>>,
+    State(token): State<String>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -569,7 +569,7 @@ async fn require_bearer_token(
 /// unauthenticated (only reachable via the explicit `metrics-disable-auth` opt-out).
 pub async fn start_metrics_server(
     listener: TcpListener,
-    auth_token: Option<Arc<str>>,
+    auth_token: Option<String>,
 ) -> anyhow::Result<()> {
     let mut app = Router::new().route("/metrics", get(metrics_handler));
 
@@ -596,7 +596,7 @@ mod tests {
         Router::new()
             .route("/metrics", get(metrics_handler))
             .route_layer(middleware::from_fn_with_state(
-                Arc::<str>::from("secret"),
+                "secret".to_string(),
                 require_bearer_token,
             ))
     }

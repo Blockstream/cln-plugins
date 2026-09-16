@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
 
     let metrics_token_file = configured.option(&OPT_METRICS_TOKEN_FILE)?;
     let disable_auth = configured.option(&OPT_METRICS_DISABLE_AUTH)?;
-    let auth_token: Option<Arc<str>> = match (metrics_token_file, disable_auth) {
+    let auth_token: Option<String> = match (metrics_token_file, disable_auth) {
         (Some(path), _) => Some(read_token_file(&path).await?),
         (None, true) => {
             warn!("metrics-disable-auth is set: /metrics is being served WITHOUT authentication");
@@ -179,20 +179,23 @@ const MIN_TOKEN_LEN: usize = 16;
 
 /// Reads the bearer token from `path`, trimming surrounding whitespace so a trailing newline
 /// left by `echo` or an editor doesn't become part of the expected token.
-async fn read_token_file(path: &str) -> Result<Arc<str>> {
+async fn read_token_file(path: &str) -> Result<String> {
     let contents = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| anyhow::anyhow!("failed to read metrics-token-file {path}: {e}"))?;
     let token = contents.trim();
+
     if token.is_empty() {
         return Err(anyhow::anyhow!("metrics-token-file {path} is empty"));
     }
+
     if token.len() < MIN_TOKEN_LEN {
         return Err(anyhow::anyhow!(
             "metrics-token-file {path} holds a token shorter than {MIN_TOKEN_LEN} characters; use a longer, random value"
         ));
     }
-    Ok(Arc::from(token))
+
+    Ok(token.to_string())
 }
 
 async fn rpc_status(plugin: Plugin<PluginState>, _args: Value) -> Result<Value, anyhow::Error> {
