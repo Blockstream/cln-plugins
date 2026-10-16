@@ -7,7 +7,7 @@ use cln_rpc::model::requests::{
     SignmessageRequest,
 };
 use cln_rpc::model::responses::ListfundsOutputsStatus;
-use cln_rpc::primitives::ChannelState;
+use cln_rpc::primitives::{ChannelState, PublicKey};
 
 /// Signs `message` (the plain message block, with no armor) via `signmessage`
 /// and returns the zbase32-encoded signature.
@@ -22,14 +22,20 @@ pub async fn sign_message(rpc: &mut ClnRpc, message: &str) -> Result<String> {
     Ok(resp.zbase)
 }
 
-/// Verifies a message/signature pair via `checkmessage` and returns whether it
-/// verified plus the pubkey CLN recovered from the signature. Run right after
-/// signing so a broken signature is caught before the statement ever leaves
-/// the node, instead of being discovered by users later.
-pub async fn check_message(rpc: &mut ClnRpc, message: &str, zbase: &str) -> Result<(bool, String)> {
+/// Verifies a message/signature pair against `pubkey` via `checkmessage` and
+/// returns whether it verified plus the pubkey CLN recovered from the
+/// signature. Run right after signing so a broken signature is caught before
+/// the statement ever leaves the node, instead of being discovered by users
+/// later.
+pub async fn check_message(
+    rpc: &mut ClnRpc,
+    message: &str,
+    zbase: &str,
+    pubkey: Option<PublicKey>,
+) -> Result<(bool, String)> {
     let resp = rpc
         .call_typed(&CheckmessageRequest {
-            pubkey: None,
+            pubkey,
             message: message.to_string(),
             zbase: zbase.to_string(),
         })

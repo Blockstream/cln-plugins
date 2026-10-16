@@ -72,7 +72,13 @@ async fn get_signed_balance(
     // Self-check: run the same checkmessage round trip the verifier will do before
     // ever returning the statement, so a signing bug is caught here instead
     // of by whoever tries to verify it later.
-    let (verified, recovered_pubkey) = rpc::check_message(&mut rpc, &message, &signature).await?;
+    let (verified, recovered_pubkey) = rpc::check_message(
+        &mut rpc,
+        &message,
+        &signature,
+        Some(inputs.node_id.parse().context("failed to parse node id")?),
+    )
+    .await?;
 
     if !verified {
         anyhow::bail!(

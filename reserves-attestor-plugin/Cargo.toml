@@ -3,6 +3,7 @@ name = "reserves-attestor-plugin"
 version = "0.1.0"
 edition = "2024"
 description = "CLN plugin that produces a signed on-chain + Lightning balance statement for a single node"
+license.workspace = true
 
 [[bin]]
 name = "reserves-attestor-plugin"
