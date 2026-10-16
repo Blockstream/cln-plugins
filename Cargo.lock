@@ -549,8 +549,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -581,6 +583,24 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "cln-rpc"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8c63eb175d58f0212e35e427237cf3e4f856f47ec7b8ad95110484d292fc819"
+dependencies = [
+ "anyhow",
+ "bitcoin",
+ "bytes",
+ "futures-util",
+ "hex",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2188,7 +2208,7 @@ dependencies = [
  "anyhow",
  "axum",
  "cln-plugin",
- "cln-rpc",
+ "cln-rpc 0.7.0",
  "prometheus",
  "serde",
  "serde_json",
@@ -2968,6 +2988,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "reserves-attestor-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "cln-plugin",
+ "cln-rpc 0.6.0",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "resolv-conf"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2994,7 +3028,7 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "cln-plugin",
- "cln-rpc",
+ "cln-rpc 0.7.0",
  "google-cloud-auth",
  "google-cloud-storage",
  "serde",

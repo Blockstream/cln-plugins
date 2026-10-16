@@ -17,16 +17,17 @@ A growing collection of plugins for [Core Lightning](https://github.com/Elements
 Running a Core Lightning node often means connecting it to the rest of your infrastructure: monitoring, event pipelines,
 dashboards, alerts, and more. This repository keeps those integrations small, composable, and open source.
 
-Each plugin lives in its own workspace crate and can be built, configured, and run independently. There are three plugins
+Each plugin lives in its own workspace crate and can be built, configured, and run independently. There are four plugins
 today—and the collection is designed to grow.
 
 ## Plugins
 
-| Plugin                               | What it does                                                       | Integrates with      |
-|--------------------------------------|--------------------------------------------------------------------|----------------------|
-| [`event-plugin`](./event-plugin)     | Publishes CLN events and hook data to a message broker             | RabbitMQ             |
-| [`metrics-plugin`](./metrics-plugin) | Exposes node, funds, liquidity, channel, peer, and event metrics   | Prometheus           |
-| [`rpc-log-plugin`](./rpc-log-plugin) | Stores selected, sanitized RPC requests as individual JSON objects | Google Cloud Storage |
+| Plugin                                                   | What it does                                                       | Integrates with      |
+|----------------------------------------------------------|--------------------------------------------------------------------|----------------------|
+| [`event-plugin`](./event-plugin)                         | Publishes CLN events and hook data to a message broker             | RabbitMQ             |
+| [`metrics-plugin`](./metrics-plugin)                     | Exposes node, funds, liquidity, channel, peer, and event metrics   | Prometheus           |
+| [`reserves-attestor-plugin`](./reserves-attestor-plugin) | Produces verifiable, node-signed balance statements                | BLIP-50 signatures   |
+| [`rpc-log-plugin`](./rpc-log-plugin)                     | Stores selected, sanitized RPC requests as individual JSON objects | Google Cloud Storage |
 
 ### Event plugin
 
@@ -45,6 +46,18 @@ balances, channel liquidity, peers, forwards, HTLCs, collected fees, and refresh
 Use it as the foundation for dashboards, alerts, and day-to-day node monitoring.
 
 [Configuration and metric reference →](./metrics-plugin/README.md)
+
+### Reserves attestor plugin
+
+Produce a signed, point-in-time statement of the funds controlled by your node. The plugin reports confirmed spendable
+on-chain funds and the node's side of open Lightning channels, while listing unconfirmed, reserved, immature, and pending
+amounts separately so they cannot be mistaken for the available balance.
+
+Each statement is signed with the node's key through CLN's `signmessage` RPC and can be independently verified with
+`checkmessage`. Its heading defaults to `Core Lightning node balance statement` and can be customized with the
+`reserves-attestor-service-name` option.
+
+[Configuration, statement format, and verification →](./reserves-attestor-plugin/README.md)
 
 ### RPC log plugin
 
@@ -82,6 +95,7 @@ The executables are created in `target/release/`:
 ```text
 target/release/event-plugin
 target/release/metrics-plugin
+target/release/reserves-attestor-plugin
 target/release/rpc-log-plugin
 ```
 
@@ -105,6 +119,7 @@ For example:
 blockstream/cln-plugins-rpc-log-plugin:v1.2.3
 blockstream/cln-plugins-event-plugin:v1.2.3
 blockstream/cln-plugins-metrics-plugin:v1.2.3
+blockstream/cln-plugins-reserves-attestor-plugin:v1.2.3
 ```
 
 ### Install a plugin
@@ -198,4 +213,3 @@ discussed early.
 Lightning plugins run alongside your node and may receive sensitive operational data. Review code and configuration
 before deployment, bind network endpoints conservatively, protect broker credentials, and test changes outside
 production first.
-
