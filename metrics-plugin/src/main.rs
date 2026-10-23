@@ -15,7 +15,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::cache::CachedData;
 use crate::metrics::RefreshHealth;
@@ -36,6 +36,21 @@ const OPT_REFRESH_SECS: ConfigOption<'static, cln_plugin::options::config_type::
         "How often (seconds) to refresh CLN node data for gauge metrics",
     );
 
+const OPT_METRICS_TOKEN_FILE: ConfigOption<'static, cln_plugin::options::config_type::String> =
+    ConfigOption::new_str_no_default(
+        "metrics-token-file",
+        "Path to a file containing the bearer token required to access the /metrics endpoint",
+    );
+
+const OPT_METRICS_DISABLE_AUTH: ConfigOption<
+    'static,
+    cln_plugin::options::config_type::DefaultBoolean,
+> = ConfigOption::new_bool_with_default(
+    "metrics-disable-auth",
+    false,
+    "Serve /metrics without authentication (INSECURE - local/dev use only)",
+);
+
 /// Shared plugin state - event counters and a read-cache of the last CLN poll.
 /// Event counters are mutated atomically from subscription/hook handlers; the cache
 /// is rebuilt by the refresh loop and read by both 'rpc_status' and the metrics
@@ -51,6 +66,8 @@ async fn main() -> Result<()> {
     let configured = Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .option(OPT_METRICS_ADDR)
         .option(OPT_REFRESH_SECS)
+        .option(OPT_METRICS_TOKEN_FILE)
+        .option(OPT_METRICS_DISABLE_AUTH)
         .subscribe("channel_opened", events::on_channel_opened)
         .subscribe("forward_event", events::on_forward_event)
         .subscribe("channel_state_changed", events::on_channel_state_changed)
@@ -73,6 +90,21 @@ async fn main() -> Result<()> {
         .option(&OPT_REFRESH_SECS)
         .unwrap_or(DEFAULT_REFRESH_SECS as i64)
         .max(5) as u64; // floor at 5s to avoid hammering CLN RPC
+
+    let metrics_token_file = configured.option(&OPT_METRICS_TOKEN_FILE)?;
+    let disable_auth = configured.option(&OPT_METRICS_DISABLE_AUTH)?;
+    let auth_token: Option<String> = match (metrics_token_file, disable_auth) {
+        (Some(path), _) => Some(read_token_file(&path).await?),
+        (None, true) => {
+            warn!("metrics-disable-auth is set: /metrics is being served WITHOUT authentication");
+            None
+        }
+        (None, false) => {
+            return Err(anyhow::anyhow!(
+                "metrics-token-file is required to protect /metrics; set --metrics-disable-auth to run without authentication"
+            ));
+        }
+    };
 
     let socket_path = PathBuf::from(configured.configuration().lightning_dir)
         .join(configured.configuration().rpc_file.clone());
@@ -99,7 +131,7 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
     let plugin = configured.start(state).await?;
 
-    metrics::start_metrics_server(listener).await?;
+    metrics::start_metrics_server(listener, auth_token).await?;
 
     spawn_refresh_loop(cache, socket_path, refresh_secs, health);
 
@@ -141,6 +173,31 @@ fn spawn_refresh_loop(
     });
 }
 
+/// Tokens shorter than this are rejected at startup - long enough to rule out trivially
+/// guessable values without dictating a specific format.
+const MIN_TOKEN_LEN: usize = 16;
+
+/// Reads the bearer token from `path`, trimming surrounding whitespace so a trailing newline
+/// left by `echo` or an editor doesn't become part of the expected token.
+async fn read_token_file(path: &str) -> Result<String> {
+    let contents = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to read metrics-token-file {path}: {e}"))?;
+    let token = contents.trim();
+
+    if token.is_empty() {
+        return Err(anyhow::anyhow!("metrics-token-file {path} is empty"));
+    }
+
+    if token.len() < MIN_TOKEN_LEN {
+        return Err(anyhow::anyhow!(
+            "metrics-token-file {path} holds a token shorter than {MIN_TOKEN_LEN} characters; use a longer, random value"
+        ));
+    }
+
+    Ok(token.to_string())
+}
+
 async fn rpc_status(plugin: Plugin<PluginState>, _args: Value) -> Result<Value, anyhow::Error> {
     let cache = plugin.state().cache.read().expect("cache lock poisoned");
     Ok(serde_json::json!({
@@ -148,4 +205,62 @@ async fn rpc_status(plugin: Plugin<PluginState>, _args: Value) -> Result<Value, 
         "channels": cache.channels.len(),
         "blockheight": cache.node.blockheight,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn tempfile_with_contents(contents: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "metrics-plugin-test-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn trims_whitespace_and_trailing_newline() {
+        let file = tempfile_with_contents("  a-long-enough-token\n");
+        let token = read_token_file(file.to_str().unwrap()).await.unwrap();
+        assert_eq!(&*token, "a-long-enough-token");
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_file() {
+        let file = tempfile_with_contents("   \n");
+        let err = read_token_file(file.to_str().unwrap()).await.unwrap_err();
+        assert!(err.to_string().contains("is empty"));
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_token_shorter_than_minimum() {
+        let file = tempfile_with_contents("short\n");
+        let err = read_token_file(file.to_str().unwrap()).await.unwrap_err();
+        assert!(err.to_string().contains("shorter than"));
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn accepts_token_at_exactly_the_minimum_length() {
+        let token = "a".repeat(MIN_TOKEN_LEN);
+        let file = tempfile_with_contents(&token);
+        let read = read_token_file(file.to_str().unwrap()).await.unwrap();
+        assert_eq!(&*read, token.as_str());
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_file() {
+        let err = read_token_file("/nonexistent/metrics-token")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
 }
