@@ -3,7 +3,10 @@ mod events;
 mod metrics;
 
 use anyhow::Result;
-use cln_plugin::{Builder, Plugin, options::ConfigOption};
+use cln_plugin::{
+    Builder, Plugin,
+    options::{ConfigOption, DefaultBooleanConfigOption, DefaultIntegerConfigOption, StringConfigOption},
+};
 use cln_rpc::ClnRpc;
 use cln_rpc::model::requests::GetinfoRequest;
 use serde_json::Value;
@@ -23,29 +26,23 @@ use crate::metrics::{DerivedCollector, EventCounters};
 
 const DEFAULT_REFRESH_SECS: u64 = 30;
 
-const OPT_METRICS_ADDR: ConfigOption<'static, cln_plugin::options::config_type::String> =
-    ConfigOption::new_str_no_default(
-        "metrics-addr",
-        "Address and port to expose the Prometheus /metrics endpoint on",
-    );
+const OPT_METRICS_ADDR: StringConfigOption = ConfigOption::new_str_no_default(
+    "metrics-addr",
+    "Address and port to expose the Prometheus /metrics endpoint on",
+);
 
-const OPT_REFRESH_SECS: ConfigOption<'static, cln_plugin::options::config_type::DefaultInteger> =
-    ConfigOption::new_i64_with_default(
-        "metrics-refresh",
-        DEFAULT_REFRESH_SECS as i64,
-        "How often (seconds) to refresh CLN node data for gauge metrics",
-    );
+const OPT_REFRESH_SECS: DefaultIntegerConfigOption = ConfigOption::new_i64_with_default(
+    "metrics-refresh",
+    DEFAULT_REFRESH_SECS as i64,
+    "How often (seconds) to refresh CLN node data for gauge metrics",
+);
 
-const OPT_METRICS_TOKEN_FILE: ConfigOption<'static, cln_plugin::options::config_type::String> =
-    ConfigOption::new_str_no_default(
-        "metrics-token-file",
-        "Path to a file containing the bearer token required to access the /metrics endpoint",
-    );
+const OPT_METRICS_TOKEN_FILE: StringConfigOption = ConfigOption::new_str_no_default(
+    "metrics-token-file",
+    "Path to a file containing the bearer token required to access the /metrics endpoint",
+);
 
-const OPT_METRICS_DISABLE_AUTH: ConfigOption<
-    'static,
-    cln_plugin::options::config_type::DefaultBoolean,
-> = ConfigOption::new_bool_with_default(
+const OPT_METRICS_DISABLE_AUTH: DefaultBooleanConfigOption = ConfigOption::new_bool_with_default(
     "metrics-disable-auth",
     false,
     "Serve /metrics without authentication (INSECURE - local/dev use only)",
