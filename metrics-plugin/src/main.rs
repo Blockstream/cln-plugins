@@ -37,10 +37,7 @@ const OPT_REFRESH_SECS: DefaultIntegerConfigOption = ConfigOption::new_i64_with_
     "How often (seconds) to refresh CLN node data for gauge metrics",
 );
 
-const OPT_METRICS_TOKEN_FILE: StringConfigOption = ConfigOption::new_str_no_default(
-    "metrics-token-file",
-    "Path to a file containing the bearer token required to access the /metrics endpoint",
-);
+const METRICS_TOKEN_ENV: &str = "METRICS_TOKEN";
 
 const OPT_METRICS_DISABLE_AUTH: DefaultBooleanConfigOption = ConfigOption::new_bool_with_default(
     "metrics-disable-auth",
@@ -63,7 +60,6 @@ async fn main() -> Result<()> {
     let configured = Builder::new(tokio::io::stdin(), tokio::io::stdout())
         .option(OPT_METRICS_ADDR)
         .option(OPT_REFRESH_SECS)
-        .option(OPT_METRICS_TOKEN_FILE)
         .option(OPT_METRICS_DISABLE_AUTH)
         .subscribe("channel_opened", events::on_channel_opened)
         .subscribe("forward_event", events::on_forward_event)
@@ -88,17 +84,17 @@ async fn main() -> Result<()> {
         .unwrap_or(DEFAULT_REFRESH_SECS as i64)
         .max(5) as u64; // floor at 5s to avoid hammering CLN RPC
 
-    let metrics_token_file = configured.option(&OPT_METRICS_TOKEN_FILE)?;
+    let metrics_token_env = std::env::var(METRICS_TOKEN_ENV).ok();
     let disable_auth = configured.option(&OPT_METRICS_DISABLE_AUTH)?;
-    let auth_token: Option<String> = match (metrics_token_file, disable_auth) {
-        (Some(path), _) => Some(read_token_file(&path).await?),
+    let auth_token: Option<String> = match (metrics_token_env, disable_auth) {
+        (Some(token), _) => Some(validate_token(&token)?),
         (None, true) => {
             warn!("metrics-disable-auth is set: /metrics is being served WITHOUT authentication");
             None
         }
         (None, false) => {
             return Err(anyhow::anyhow!(
-                "metrics-token-file is required to protect /metrics; set --metrics-disable-auth to run without authentication"
+                "{METRICS_TOKEN_ENV} env var is required to protect /metrics; set --metrics-disable-auth to run without authentication"
             ));
         }
     };
@@ -174,21 +170,19 @@ fn spawn_refresh_loop(
 /// guessable values without dictating a specific format.
 const MIN_TOKEN_LEN: usize = 16;
 
-/// Reads the bearer token from `path`, trimming surrounding whitespace so a trailing newline
-/// left by `echo` or an editor doesn't become part of the expected token.
-async fn read_token_file(path: &str) -> Result<String> {
-    let contents = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to read metrics-token-file {path}: {e}"))?;
-    let token = contents.trim();
+/// Validates the bearer token read from the `METRICS_TOKEN` env var, trimming surrounding
+/// whitespace so a stray newline from how the var was set doesn't become part of the expected
+/// token.
+fn validate_token(raw: &str) -> Result<String> {
+    let token = raw.trim();
 
     if token.is_empty() {
-        return Err(anyhow::anyhow!("metrics-token-file {path} is empty"));
+        return Err(anyhow::anyhow!("{METRICS_TOKEN_ENV} env var is empty"));
     }
 
     if token.len() < MIN_TOKEN_LEN {
         return Err(anyhow::anyhow!(
-            "metrics-token-file {path} holds a token shorter than {MIN_TOKEN_LEN} characters; use a longer, random value"
+            "{METRICS_TOKEN_ENV} env var holds a token shorter than {MIN_TOKEN_LEN} characters; use a longer, random value"
         ));
     }
 
@@ -207,57 +201,29 @@ async fn rpc_status(plugin: Plugin<PluginState>, _args: Value) -> Result<Value, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn tempfile_with_contents(contents: &str) -> PathBuf {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "metrics-plugin-test-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&path, contents).unwrap();
-        path
-    }
-
-    #[tokio::test]
-    async fn trims_whitespace_and_trailing_newline() {
-        let file = tempfile_with_contents("  a-long-enough-token\n");
-        let token = read_token_file(file.to_str().unwrap()).await.unwrap();
+    #[test]
+    fn trims_whitespace_and_trailing_newline() {
+        let token = validate_token("  a-long-enough-token\n").unwrap();
         assert_eq!(&*token, "a-long-enough-token");
-        std::fs::remove_file(&file).unwrap();
     }
 
-    #[tokio::test]
-    async fn rejects_empty_file() {
-        let file = tempfile_with_contents("   \n");
-        let err = read_token_file(file.to_str().unwrap()).await.unwrap_err();
+    #[test]
+    fn rejects_empty_value() {
+        let err = validate_token("   \n").unwrap_err();
         assert!(err.to_string().contains("is empty"));
-        std::fs::remove_file(&file).unwrap();
     }
 
-    #[tokio::test]
-    async fn rejects_token_shorter_than_minimum() {
-        let file = tempfile_with_contents("short\n");
-        let err = read_token_file(file.to_str().unwrap()).await.unwrap_err();
+    #[test]
+    fn rejects_token_shorter_than_minimum() {
+        let err = validate_token("short\n").unwrap_err();
         assert!(err.to_string().contains("shorter than"));
-        std::fs::remove_file(&file).unwrap();
     }
 
-    #[tokio::test]
-    async fn accepts_token_at_exactly_the_minimum_length() {
+    #[test]
+    fn accepts_token_at_exactly_the_minimum_length() {
         let token = "a".repeat(MIN_TOKEN_LEN);
-        let file = tempfile_with_contents(&token);
-        let read = read_token_file(file.to_str().unwrap()).await.unwrap();
+        let read = validate_token(&token).unwrap();
         assert_eq!(&*read, token.as_str());
-        std::fs::remove_file(&file).unwrap();
-    }
-
-    #[tokio::test]
-    async fn rejects_missing_file() {
-        let err = read_token_file("/nonexistent/metrics-token")
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("failed to read"));
     }
 }
