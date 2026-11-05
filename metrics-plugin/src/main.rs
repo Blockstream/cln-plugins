@@ -5,7 +5,9 @@ mod metrics;
 use anyhow::Result;
 use cln_plugin::{
     Builder, Plugin,
-    options::{ConfigOption, DefaultBooleanConfigOption, DefaultIntegerConfigOption, StringConfigOption},
+    options::{
+        ConfigOption, DefaultBooleanConfigOption, DefaultIntegerConfigOption, StringConfigOption,
+    },
 };
 use cln_rpc::ClnRpc;
 use cln_rpc::model::requests::GetinfoRequest;
