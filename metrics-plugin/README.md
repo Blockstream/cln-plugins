@@ -6,12 +6,30 @@ Core Lightning plugin that exposes node liquidity metrics via a Prometheus `/met
 
 ## Configuration
 
-Both options are set as CLN plugin options (e.g. in `config` or passed via `--plugin`):
+These are set as CLN plugin options (e.g. in `config` or passed via `--plugin`):
 
-| Option              | Required | Default | Description                                                            |
-|---------------------|----------|---------|------------------------------------------------------------------------|
-| `--metrics-addr`    | yes      | -       | Address and port to expose `/metrics` on (e.g. `127.0.0.1:9750`)       |
-| `--metrics-refresh` | no       | `30`    | How often (seconds) to refresh node data for gauge metrics. Minimum 5. |
+| Option                    | Required                                         | Default | Description                                                                  |
+|---------------------------|---------------------------------------------------|---------|--------------------------------------------------------------------------------|
+| `--metrics-addr`          | yes                                               | -       | Address and port to expose `/metrics` on (e.g. `127.0.0.1:9750`)             |
+| `--metrics-refresh`       | no                                                | `30`    | How often (seconds) to refresh node data for gauge metrics. Minimum 5.       |
+| `--metrics-disable-auth`  | no                                                | `false` | Serve `/metrics` without authentication. **Insecure** - local/dev use only.  |
+
+The bearer token required to access `/metrics` is read from the `METRICS_TOKEN` environment
+variable (not a plugin option), so it can be injected the way your deployment already manages
+secrets - a Kubernetes `secretKeyRef`, a systemd `EnvironmentFile`, a Docker secret, etc. - rather
+than requiring a file on disk.
+
+The plugin refuses to start unless either `METRICS_TOKEN` or `--metrics-disable-auth` is set, so a
+deployment can't accidentally expose `/metrics` without making an explicit choice. When
+`--metrics-disable-auth` is used, the plugin logs a warning on startup.
+
+The plugin rejects tokens shorter than 16 characters at startup (and an empty value), to catch
+weak or placeholder values before `/metrics` is ever exposed. Generate a long, random token rather
+than a memorable password, e.g.:
+
+```
+export METRICS_TOKEN=$(openssl rand -hex 32)
+```
 
 Example CLN config:
 
@@ -19,6 +37,23 @@ Example CLN config:
 plugin=/path/to/metrics-plugin
 metrics-addr=127.0.0.1:9750
 metrics-refresh=15
+```
+
+Scrape it with:
+
+```
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:9750/metrics
+```
+
+Prometheus scrape config equivalent:
+
+```yaml
+scrape_configs:
+  - job_name: cln-metrics
+    authorization:
+      credentials: "<METRICS_TOKEN value>"
+    static_configs:
+      - targets: ["127.0.0.1:9750"]
 ```
 
 ---

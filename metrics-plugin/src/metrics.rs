@@ -1,7 +1,9 @@
 use crate::cache::CachedData;
 use axum::{
     Router,
-    http::StatusCode,
+    extract::{Request, State},
+    http::{StatusCode, header},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -521,12 +523,120 @@ async fn metrics_handler() -> Response {
         .into_response()
 }
 
-pub async fn start_metrics_server(listener: TcpListener) -> anyhow::Result<()> {
-    let app = Router::new().route("/metrics", get(metrics_handler));
+/// Constant-time comparison to avoid leaking the configured token via response-timing side
+/// channels.
+fn tokens_match(provided: &[u8], expected: &[u8]) -> bool {
+    if provided.len() != expected.len() {
+        return false;
+    }
+
+    provided
+        .iter()
+        .zip(expected.iter())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+fn is_authorized(request: &Request, token: &str) -> bool {
+    let Some(header) = request.headers().get(header::AUTHORIZATION) else {
+        return false;
+    };
+
+    let Ok(header) = header.to_str() else {
+        return false;
+    };
+
+    let Some(provided) = header.strip_prefix("Bearer ") else {
+        return false;
+    };
+
+    tokens_match(provided.as_bytes(), token.as_bytes())
+}
+
+async fn require_bearer_token(
+    State(token): State<String>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if is_authorized(&request, &token) {
+        return next.run(request).await;
+    }
+
+    (StatusCode::UNAUTHORIZED, "Unauthorized\n").into_response()
+}
+
+/// `auth_token` gates the `/metrics` route with bearer-token auth when set; `None` serves it
+/// unauthenticated (only reachable via the explicit `metrics-disable-auth` opt-out).
+pub async fn start_metrics_server(
+    listener: TcpListener,
+    auth_token: Option<String>,
+) -> anyhow::Result<()> {
+    let mut app = Router::new().route("/metrics", get(metrics_handler));
+
+    if let Some(token) = auth_token {
+        app = app.route_layer(middleware::from_fn_with_state(token, require_bearer_token));
+    }
+
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             error!("metrics server error: {}", e);
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn protected_app() -> Router {
+        Router::new()
+            .route("/metrics", get(metrics_handler))
+            .route_layer(middleware::from_fn_with_state(
+                "secret".to_string(),
+                require_bearer_token,
+            ))
+    }
+
+    async fn get_metrics(app: Router, auth_header: Option<&str>) -> StatusCode {
+        let mut req = Request::builder().uri("/metrics");
+        if let Some(value) = auth_header {
+            req = req.header(header::AUTHORIZATION, value);
+        }
+        let response = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        response.status()
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_authorization_header() {
+        assert_eq!(
+            get_metrics(protected_app(), None).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_wrong_token() {
+        assert_eq!(
+            get_metrics(protected_app(), Some("Bearer wrong")).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn accepts_correct_token() {
+        assert_eq!(
+            get_metrics(protected_app(), Some("Bearer secret")).await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn unprotected_app_serves_without_authorization() {
+        let app = Router::new().route("/metrics", get(metrics_handler));
+        assert_eq!(get_metrics(app, None).await, StatusCode::OK);
+    }
 }
