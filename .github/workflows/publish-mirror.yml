@@ -1,0 +1,72 @@
+# Additional registry destinations are configured through repository secrets and environments.
+name: Publish CLN plugin image mirror
+
+on:
+  push:
+    tags:
+      - '*-plugin/v[0-9]+.[0-9]+.[0-9]+'
+      - '*-plugin/v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+
+permissions: {}
+
+concurrency:
+  group: publish-mirror-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    name: Resolve plugin and version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      plugin_name: ${{ steps.meta.outputs.plugin_name }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: Validate tag and plugin directory
+        id: meta
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^[a-z0-9]+(-[a-z0-9]+)*-plugin/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] \
+            || { echo 'Invalid plugin release tag' >&2; exit 1; }
+          plugin_name="${TAG%%/*}"
+          version="${TAG#*/}"
+          [[ ${#version} -le 128 ]] || exit 1
+          [[ -d "$plugin_name" ]] \
+            || { echo 'Plugin directory not found' >&2; exit 1; }
+          printf 'plugin_name=%s\n' "$plugin_name" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: metadata
+    permissions:
+      contents: read
+      id-token: write
+    uses: Blockstream/ci-components/.github/workflows/publish.yml@v1
+    with:
+      environment: production
+      context: .
+      dockerfile: Dockerfile
+      # Requested reusable workflow extension: append image-name to the secret image prefix.
+      image-name: cln-plugins-${{ needs.metadata.outputs.plugin_name }}
+      build-args: |
+        PLUGIN_NAME=${{ needs.metadata.outputs.plugin_name }}
+      platforms: |
+        linux/amd64
+        linux/arm64
+      tags: |
+        ${{ needs.metadata.outputs.version }}
+    secrets:
+      workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      service-account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      image: ${{ secrets.GAR_IMAGE_PREFIX }}

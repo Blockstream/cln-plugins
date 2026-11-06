@@ -122,6 +122,17 @@ blockstream/cln-plugins-metrics-plugin:v1.2.3
 blockstream/cln-plugins-reserves-attestor-plugin:v1.2.3
 ```
 
+The GitHub Actions workflow `.github/workflows/publish-mirror.yml` publishes signed
+images for `linux/amd64` and `linux/arm64` to an additional registry on plugin version
+and release-candidate tags, alongside the existing GHCR publishing workflow. It
+uses the shared `Blockstream/ci-components` publish workflow with immutable version
+tags and image names `cln-plugins-<plugin>`. Configure repository secrets
+`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, and `GAR_IMAGE_PREFIX` (the
+image prefix), and the `production` and `production-build` environments. Deployment
+policies are configured in repository environment settings. This caller requires
+the reusable workflow's requested `image-name` extension to append the plugin image
+name to the secret prefix.
+
 ### Install a plugin
 
 Mount the directory where the plugin should be installed as `/plugins`:
