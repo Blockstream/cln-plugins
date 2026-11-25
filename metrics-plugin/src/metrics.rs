@@ -372,7 +372,7 @@ impl Collector for DerivedCollector {
         ));
         out.extend(scalar(
             &self.funds_output_msat,
-            cache.funds.output_msat as f64,
+            cache.funds.output_msat() as f64,
         ));
         out.extend(scalar(
             &self.funds_channel_msat,
@@ -380,7 +380,7 @@ impl Collector for DerivedCollector {
         ));
         out.extend(scalar(
             &self.funds_total_msat,
-            (cache.funds.output_msat + cache.funds.channel_msat) as f64,
+            (cache.funds.output_msat() + cache.funds.channel_msat) as f64,
         ));
 
         let total_outbound: i64 = cache.channels.iter().map(|c| c.spendable_msat).sum();
