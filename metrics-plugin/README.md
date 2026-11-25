@@ -68,6 +68,20 @@ scrape_configs:
 | `lightning_node_blockheight`    | Gauge | Current Bitcoin blockheight       |
 | `lightning_fees_collected_msat` | Gauge | Total routing fees collected      |
 
+### Chain
+
+From `getchaininfo`, which CLN's Bitcoin backend plugin (`bcli` by default)
+answers from bitcoind. `lightning_chain_headers - lightning_node_blockheight`
+is how many blocks the node is behind its bitcoind. If `getchaininfo` fails
+or takes over 10 s, these series are absent until the next successful
+refresh; the other metrics still refresh.
+
+| Metric                    | Type  | Description                                     |
+|---------------------------|-------|-------------------------------------------------|
+| `lightning_chain_headers` | Gauge | Block headers bitcoind knows (`headercount`)    |
+| `lightning_chain_blocks`  | Gauge | Blocks bitcoind has validated (`blockcount`)    |
+| `lightning_chain_ibd`     | Gauge | `1` while bitcoind is in initial block download |
+
 ### Funds
 
 | Metric                         | Type  | Description                         |
