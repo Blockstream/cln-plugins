@@ -143,6 +143,10 @@ pub struct DerivedCollector {
 
     // Scalar gauges
     node_blockheight: Opts,
+    // Absent while getchaininfo fails, so alerts see a gap, not a stale value.
+    chain_headers: Opts,
+    chain_blocks: Opts,
+    chain_ibd: Opts,
     fees_collected_msat: Opts,
     funds_output_msat: Opts,
     funds_channel_msat: Opts,
@@ -180,6 +184,18 @@ impl DerivedCollector {
         let node_blockheight = o(
             "lightning_node_blockheight",
             "Current Bitcoin blockheight on this node.",
+        );
+        let chain_headers = o(
+            "lightning_chain_headers",
+            "Block headers known to the node's bitcoind (getchaininfo headercount): the chain tip the node should reach.",
+        );
+        let chain_blocks = o(
+            "lightning_chain_blocks",
+            "Blocks validated by the node's bitcoind (getchaininfo blockcount).",
+        );
+        let chain_ibd = o(
+            "lightning_chain_ibd",
+            "Is the node's bitcoind in initial block download? (1=yes, 0=no)",
         );
         let fees_collected_msat = o(
             "lightning_fees_collected_msat",
@@ -280,6 +296,9 @@ impl DerivedCollector {
         let mut descs = Vec::new();
         for opts in [
             &node_blockheight,
+            &chain_headers,
+            &chain_blocks,
+            &chain_ibd,
             &fees_collected_msat,
             &funds_output_msat,
             &funds_channel_msat,
@@ -324,6 +343,9 @@ impl DerivedCollector {
             cache,
             descs,
             node_blockheight,
+            chain_headers,
+            chain_blocks,
+            chain_ibd,
             fees_collected_msat,
             funds_output_msat,
             funds_channel_msat,
@@ -359,12 +381,17 @@ impl Collector for DerivedCollector {
 
     fn collect(&self) -> Vec<MetricFamily> {
         let cache = self.cache.read().expect("cache lock poisoned");
-        let mut out = Vec::with_capacity(26);
+        let mut out = Vec::with_capacity(29);
 
         out.extend(scalar(
             &self.node_blockheight,
             cache.node.blockheight as f64,
         ));
+        if let Some(chain) = &cache.chain {
+            out.extend(scalar(&self.chain_headers, chain.headers as f64));
+            out.extend(scalar(&self.chain_blocks, chain.blocks as f64));
+            out.extend(scalar(&self.chain_ibd, if chain.ibd { 1.0 } else { 0.0 }));
+        }
 
         out.extend(scalar(
             &self.fees_collected_msat,
@@ -638,5 +665,45 @@ mod tests {
     async fn unprotected_app_serves_without_authorization() {
         let app = Router::new().route("/metrics", get(metrics_handler));
         assert_eq!(get_metrics(app, None).await, StatusCode::OK);
+    }
+
+    fn exposition(cache: CachedData) -> String {
+        let registry = prometheus::Registry::new();
+        let collector = DerivedCollector::new("02aa", Arc::new(RwLock::new(cache))).unwrap();
+        registry.register(Box::new(collector)).unwrap();
+        let mut body = Vec::new();
+        TextEncoder::new()
+            .encode(&registry.gather(), &mut body)
+            .unwrap();
+        String::from_utf8(body).unwrap()
+    }
+
+    #[test]
+    fn chain_series_follow_getchaininfo() {
+        let mut cache = CachedData::default();
+        cache.node.blockheight = 100;
+        cache.chain = Some(crate::cache::ChainSnapshot {
+            headers: 105,
+            blocks: 104,
+            ibd: true,
+        });
+        let body = exposition(cache);
+        for line in [
+            r#"lightning_node_blockheight{node_id="02aa"} 100"#,
+            r#"lightning_chain_headers{node_id="02aa"} 105"#,
+            r#"lightning_chain_blocks{node_id="02aa"} 104"#,
+            r#"lightning_chain_ibd{node_id="02aa"} 1"#,
+        ] {
+            assert!(body.lines().any(|l| l == line), "{line} not in:\n{body}");
+        }
+    }
+
+    #[test]
+    fn chain_series_are_absent_when_getchaininfo_failed() {
+        let mut cache = CachedData::default();
+        cache.node.blockheight = 100;
+        let body = exposition(cache);
+        assert!(!body.contains("lightning_chain_"), "{body}");
+        assert!(body.contains(r#"lightning_node_blockheight{node_id="02aa"} 100"#));
     }
 }

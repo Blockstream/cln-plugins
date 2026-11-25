@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 use cln_rpc::ClnRpc;
 use cln_rpc::model::requests::{GetinfoRequest, ListfundsRequest, ListpeerchannelsRequest};
+use serde_json::{Value, json};
+use tracing::warn;
 
 #[derive(Clone, Default)]
 pub struct ChannelSnapshot {
@@ -30,6 +33,17 @@ pub struct NodeSnapshot {
     pub fees_collected_msat: i64,
 }
 
+/// The chain as the Bitcoin backend (bcli) sees it, from `getchaininfo`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChainSnapshot {
+    /// Headers bitcoind knows: the chain tip the node should reach.
+    pub headers: i64,
+    /// Blocks bitcoind has validated.
+    pub blocks: i64,
+    /// Whether bitcoind is in initial block download.
+    pub ibd: bool,
+}
+
 #[derive(Clone, Default)]
 pub struct FundsSnapshot {
     pub output_msat: i64,
@@ -48,6 +62,9 @@ pub struct PeerSnapshot {
 #[derive(Clone, Default)]
 pub struct CachedData {
     pub node: NodeSnapshot,
+    /// `None` when `getchaininfo` failed: its series go missing for this
+    /// refresh, and every other metric still refreshes.
+    pub chain: Option<ChainSnapshot>,
     pub funds: FundsSnapshot,
     pub channels: Vec<ChannelSnapshot>,
     pub peers: Vec<PeerSnapshot>,
@@ -57,6 +74,19 @@ pub async fn fetch(socket: &Path) -> anyhow::Result<CachedData> {
     let mut rpc = ClnRpc::new(socket).await?;
 
     let info = rpc.call_typed(&GetinfoRequest {}).await?;
+    let chain = match tokio::time::timeout(CHAININFO_TIMEOUT, fetch_chain(socket, info.blockheight))
+        .await
+    {
+        Ok(Ok(chain)) => Some(chain),
+        Ok(Err(e)) => {
+            warn!("getchaininfo failed, chain metrics missing: {:#}", e);
+            None
+        }
+        Err(_) => {
+            warn!("getchaininfo timed out, chain metrics missing");
+            None
+        }
+    };
     let channels_resp = rpc
         .call_typed(&ListpeerchannelsRequest {
             id: None,
@@ -136,6 +166,7 @@ pub async fn fetch(socket: &Path) -> anyhow::Result<CachedData> {
 
     Ok(CachedData {
         node,
+        chain,
         funds: FundsSnapshot {
             output_msat,
             channel_msat,
@@ -143,4 +174,82 @@ pub async fn fetch(socket: &Path) -> anyhow::Result<CachedData> {
         channels,
         peers,
     })
+}
+
+/// How long `getchaininfo` may take before its series are dropped for this
+/// refresh. bcli asks bitcoind, which may be the thing that is stuck.
+const CHAININFO_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `getchaininfo` is registered by CLN's Bitcoin backend plugin (bcli), and
+/// cln-rpc 0.6 has no typed request for it. `last_height` is the node's own
+/// height from `getinfo`. It runs on its own connection, so a call cut off
+/// by the timeout leaves no reply pending on the one the refresh uses.
+async fn fetch_chain(socket: &Path, last_height: u32) -> anyhow::Result<ChainSnapshot> {
+    let mut rpc = ClnRpc::new(socket).await?;
+    let resp: Value = rpc
+        .call_raw("getchaininfo", &json!({ "last_height": last_height }))
+        .await?;
+    parse_chaininfo(&resp)
+}
+
+fn parse_chaininfo(resp: &Value) -> anyhow::Result<ChainSnapshot> {
+    let count = |field: &str| {
+        resp.get(field)
+            .and_then(Value::as_u64)
+            .and_then(|n| i64::try_from(n).ok())
+            .ok_or_else(|| anyhow::anyhow!("getchaininfo: {field} missing or not a count"))
+    };
+    Ok(ChainSnapshot {
+        headers: count("headercount")?,
+        blocks: count("blockcount")?,
+        ibd: resp
+            .get("ibd")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| anyhow::anyhow!("getchaininfo: ibd missing or not a bool"))?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_getchaininfo() {
+        let resp = json!({
+            "chain": "main",
+            "headercount": 925_010,
+            "blockcount": 925_008,
+            "ibd": false,
+        });
+        assert_eq!(
+            parse_chaininfo(&resp).unwrap(),
+            ChainSnapshot {
+                headers: 925_010,
+                blocks: 925_008,
+                ibd: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_initial_block_download() {
+        let resp = json!({ "chain": "regtest", "headercount": 0, "blockcount": 0, "ibd": true });
+        assert!(parse_chaininfo(&resp).unwrap().ibd);
+    }
+
+    #[test]
+    fn refuses_a_malformed_getchaininfo() {
+        for resp in [
+            json!({}),
+            json!({ "blockcount": 1, "ibd": false }),
+            json!({ "headercount": 1, "ibd": false }),
+            json!({ "headercount": 1, "blockcount": 1 }),
+            json!({ "headercount": -1, "blockcount": 1, "ibd": false }),
+            json!({ "headercount": "1", "blockcount": 1, "ibd": false }),
+            json!({ "headercount": 1.5, "blockcount": 1, "ibd": false }),
+            json!({ "headercount": 1, "blockcount": 1, "ibd": 0 }),
+        ] {
+            assert!(parse_chaininfo(&resp).is_err(), "{resp}");
+        }
+    }
 }
