@@ -3,6 +3,7 @@ use std::path::Path;
 
 use cln_rpc::ClnRpc;
 use cln_rpc::model::requests::{GetinfoRequest, ListfundsRequest, ListpeerchannelsRequest};
+use cln_rpc::model::responses::{ListfundsOutputs, ListfundsOutputsStatus};
 
 #[derive(Clone, Default)]
 pub struct ChannelSnapshot {
@@ -30,10 +31,41 @@ pub struct NodeSnapshot {
     pub fees_collected_msat: i64,
 }
 
+/// Every `status` `listfunds` can report for an output, in a fixed order so
+/// each scrape exports the same series, at 0 when the wallet has none.
+pub const OUTPUT_STATUSES: [&str; 4] = ["unconfirmed", "confirmed", "spent", "immature"];
+
 #[derive(Clone, Default)]
 pub struct FundsSnapshot {
-    pub output_msat: i64,
+    /// On-chain msat per output status (indexed like `OUTPUT_STATUSES`),
+    /// split by whether the output is reserved: `[unreserved, reserved]`.
+    pub outputs_msat: [[i64; 2]; OUTPUT_STATUSES.len()],
     pub channel_msat: i64,
+}
+
+impl FundsSnapshot {
+    /// All on-chain outputs, whatever their status or reservation.
+    pub fn output_msat(&self) -> i64 {
+        self.outputs_msat.iter().flatten().sum()
+    }
+}
+
+fn status_index(status: &ListfundsOutputsStatus) -> usize {
+    match status {
+        ListfundsOutputsStatus::UNCONFIRMED => 0,
+        ListfundsOutputsStatus::CONFIRMED => 1,
+        ListfundsOutputsStatus::SPENT => 2,
+        ListfundsOutputsStatus::IMMATURE => 3,
+    }
+}
+
+/// Sums `listfunds` outputs by status and reservation.
+fn split_outputs(outputs: &[ListfundsOutputs]) -> [[i64; 2]; OUTPUT_STATUSES.len()] {
+    let mut split = [[0; 2]; OUTPUT_STATUSES.len()];
+    for o in outputs {
+        split[status_index(&o.status)][usize::from(o.reserved)] += o.amount_msat.msat() as i64;
+    }
+    split
 }
 
 #[derive(Clone, Default)]
@@ -71,11 +103,7 @@ pub async fn fetch(socket: &Path) -> anyhow::Result<CachedData> {
         fees_collected_msat: info.fees_collected_msat.msat() as i64,
     };
 
-    let output_msat: i64 = funds_resp
-        .outputs
-        .iter()
-        .map(|o| o.amount_msat.msat() as i64)
-        .sum();
+    let outputs_msat = split_outputs(&funds_resp.outputs);
 
     let channel_msat: i64 = funds_resp
         .channels
@@ -137,10 +165,67 @@ pub async fn fetch(socket: &Path) -> anyhow::Result<CachedData> {
     Ok(CachedData {
         node,
         funds: FundsSnapshot {
-            output_msat,
+            outputs_msat,
             channel_msat,
         },
         channels,
         peers,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ListfundsOutputsStatus::*;
+    use cln_rpc::primitives::Amount;
+
+    fn output(status: ListfundsOutputsStatus, reserved: bool, sat: u64) -> ListfundsOutputs {
+        ListfundsOutputs {
+            address: None,
+            blockheight: None,
+            redeemscript: None,
+            reserved_to_block: None,
+            status,
+            amount_msat: Amount::from_msat(sat * 1000),
+            output: 0,
+            reserved,
+            scriptpubkey: String::new(),
+            txid: String::new(),
+        }
+    }
+
+    #[test]
+    fn outputs_are_split_by_status_and_reservation() {
+        let funds = FundsSnapshot {
+            outputs_msat: split_outputs(&[
+                output(CONFIRMED, false, 200_000),
+                output(CONFIRMED, false, 50_000),
+                output(CONFIRMED, true, 300_000),
+                output(UNCONFIRMED, false, 70_000),
+                output(UNCONFIRMED, true, 1_000),
+                output(IMMATURE, false, 5_000),
+            ]),
+            channel_msat: 0,
+        };
+
+        // [unreserved, reserved] per status, indexed like OUTPUT_STATUSES.
+        assert_eq!(funds.outputs_msat[0], [70_000_000, 1_000_000]);
+        assert_eq!(funds.outputs_msat[1], [250_000_000, 300_000_000]);
+        assert_eq!(funds.outputs_msat[2], [0, 0]);
+        assert_eq!(funds.outputs_msat[3], [5_000_000, 0]);
+        // The labelled series add up to the old unlabelled total.
+        assert_eq!(funds.output_msat(), 626_000_000);
+    }
+
+    #[test]
+    fn status_index_matches_output_statuses() {
+        for (status, name) in [UNCONFIRMED, CONFIRMED, SPENT, IMMATURE].iter().zip([
+            "unconfirmed",
+            "confirmed",
+            "spent",
+            "immature",
+        ]) {
+            assert_eq!(OUTPUT_STATUSES[status_index(status)], name);
+        }
+    }
 }

@@ -70,11 +70,27 @@ scrape_configs:
 
 ### Funds
 
-| Metric                         | Type  | Description                         |
-|--------------------------------|-------|-------------------------------------|
-| `lightning_funds_output_msat`  | Gauge | On-chain balance                    |
-| `lightning_funds_channel_msat` | Gauge | Balance held in channels (our side) |
-| `lightning_funds_total_msat`   | Gauge | Total balance (on-chain + channels) |
+| Metric                         | Type  | Description                                                                 |
+|--------------------------------|-------|-----------------------------------------------------------------------------|
+| `lightning_funds_output_msat`  | Gauge | On-chain balance, by output `status` and `reserved` (see below)             |
+| `lightning_funds_channel_msat` | Gauge | Balance held in channels (our side)                                         |
+| `lightning_funds_total_msat`   | Gauge | Total balance (all on-chain outputs + channels)                             |
+
+`lightning_funds_output_msat` has two labels, taken from each `listfunds` output:
+
+- `status`: `unconfirmed`, `confirmed`, `spent` or `immature`
+- `reserved`: `true` when a pending transaction (such as a channel open) has reserved the output, else `false`
+
+All 8 combinations are always exported, at 0 when empty. `spent` stays at 0, because the
+plugin calls `listfunds` without `spent`.
+
+```promql
+# On-chain funds that can be spent now, e.g. to open a channel
+lightning_funds_output_msat{status="confirmed", reserved="false"}
+
+# All on-chain funds (what the series showed before it had labels)
+sum without (status, reserved) (lightning_funds_output_msat)
+```
 
 ### Liquidity
 

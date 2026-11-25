@@ -1,4 +1,4 @@
-use crate::cache::CachedData;
+use crate::cache::{CachedData, OUTPUT_STATUSES};
 use axum::{
     Router,
     extract::{Request, State},
@@ -19,6 +19,7 @@ use tracing::error;
 
 const CHANNEL_LABELS: &[&str] = &["peer_id", "scid"];
 const PEER_LABELS: &[&str] = &["peer_id"];
+const FUNDS_OUTPUT_LABELS: &[&str] = &["status", "reserved"];
 
 /// Registers with the global registry while returning a caller-owned handle.
 /// Clone happens before boxing because 'register' takes ownership via 'Box<dyn Collector>'.
@@ -187,7 +188,7 @@ impl DerivedCollector {
         );
         let funds_output_msat = o(
             "lightning_funds_output_msat",
-            "On-chain millisatoshis available to the node.",
+            "On-chain millisatoshis in the node's wallet outputs, by status and reservation.",
         );
         let funds_channel_msat = o(
             "lightning_funds_channel_msat",
@@ -281,7 +282,6 @@ impl DerivedCollector {
         for opts in [
             &node_blockheight,
             &fees_collected_msat,
-            &funds_output_msat,
             &funds_channel_msat,
             &funds_total_msat,
             &total_outbound_msat,
@@ -292,6 +292,8 @@ impl DerivedCollector {
             let g = Gauge::with_opts(opts.clone())?;
             descs.extend(g.desc().into_iter().cloned());
         }
+        let gv = GaugeVec::new(funds_output_msat.clone(), FUNDS_OUTPUT_LABELS)?;
+        descs.extend(gv.desc().into_iter().cloned());
         for opts in [
             &channel_balance_msat,
             &channel_spendable_msat,
@@ -370,17 +372,23 @@ impl Collector for DerivedCollector {
             &self.fees_collected_msat,
             cache.node.fees_collected_msat as f64,
         ));
-        out.extend(scalar(
-            &self.funds_output_msat,
-            cache.funds.output_msat as f64,
-        ));
+        let funds_output =
+            GaugeVec::new(self.funds_output_msat.clone(), FUNDS_OUTPUT_LABELS).unwrap();
+        for (status, by_reserved) in OUTPUT_STATUSES.iter().zip(cache.funds.outputs_msat) {
+            for (reserved, msat) in ["false", "true"].iter().zip(by_reserved) {
+                funds_output
+                    .with_label_values(&[*status, *reserved])
+                    .set(msat as f64);
+            }
+        }
+        out.extend(funds_output.collect());
         out.extend(scalar(
             &self.funds_channel_msat,
             cache.funds.channel_msat as f64,
         ));
         out.extend(scalar(
             &self.funds_total_msat,
-            (cache.funds.output_msat + cache.funds.channel_msat) as f64,
+            (cache.funds.output_msat() + cache.funds.channel_msat) as f64,
         ));
 
         let total_outbound: i64 = cache.channels.iter().map(|c| c.spendable_msat).sum();
@@ -638,5 +646,62 @@ mod tests {
     async fn unprotected_app_serves_without_authorization() {
         let app = Router::new().route("/metrics", get(metrics_handler));
         assert_eq!(get_metrics(app, None).await, StatusCode::OK);
+    }
+
+    fn scrape(funds: crate::cache::FundsSnapshot) -> String {
+        let cache = Arc::new(RwLock::new(CachedData {
+            funds,
+            ..Default::default()
+        }));
+        let collector = DerivedCollector::new("n1", cache).unwrap();
+        // Like prometheus::gather(), skip families with no series (here, the
+        // per-channel and per-peer ones); the encoder rejects them.
+        let families: Vec<_> = collector
+            .collect()
+            .into_iter()
+            .filter(|f| !f.get_metric().is_empty())
+            .collect();
+        let mut buf = Vec::new();
+        TextEncoder::new().encode(&families, &mut buf).unwrap();
+        String::from_utf8(buf).unwrap()
+    }
+
+    fn value(text: &str, series: &str) -> f64 {
+        text.lines()
+            .find_map(|l| l.strip_prefix(series)?.strip_prefix(' ')?.parse().ok())
+            .unwrap_or_else(|| panic!("{series} not in:\n{text}"))
+    }
+
+    #[test]
+    fn funds_are_exported_by_status_and_reservation() {
+        let mut outputs_msat = [[0; 2]; OUTPUT_STATUSES.len()];
+        outputs_msat[0] = [7_000, 1_000]; // unconfirmed
+        outputs_msat[1] = [25_000, 30_000]; // confirmed
+        let text = scrape(crate::cache::FundsSnapshot {
+            outputs_msat,
+            channel_msat: 100_000,
+        });
+
+        let output = |status: &str, reserved: &str| {
+            value(
+                &text,
+                &format!(
+                    r#"lightning_funds_output_msat{{node_id="n1",reserved="{reserved}",status="{status}"}}"#
+                ),
+            )
+        };
+        // Spendable on-chain funds: confirmed and not reserved.
+        assert_eq!(output("confirmed", "false"), 25_000.0);
+        assert_eq!(output("confirmed", "true"), 30_000.0);
+        assert_eq!(output("unconfirmed", "false"), 7_000.0);
+        assert_eq!(output("unconfirmed", "true"), 1_000.0);
+        // Statuses without outputs are exported at 0, so the series never go absent.
+        assert_eq!(output("immature", "false"), 0.0);
+        assert_eq!(output("spent", "true"), 0.0);
+
+        assert_eq!(
+            value(&text, r#"lightning_funds_total_msat{node_id="n1"}"#),
+            163_000.0
+        );
     }
 }
